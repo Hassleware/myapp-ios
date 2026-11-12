@@ -492,9 +492,11 @@ void frame() {
         script::draw();
         input::draw();
 #if !defined(SINGLE_GAME)
-        // A small button to get back to the game list, in the corner of the part of the screen the phone leaves free.
+        // A small button to get back to the game list. Sideways it sits just past the notch or island. Upright it
+        // sits beside the notch or island, where iOS shows the clock, far enough in to clear the rounded corner.
         const float back[4] = {0, 0, 0, 0.4f}, ink[4] = {1, 1, 1, 0.9f};
-        float backX = gfx::safe_area()[0] + 44, backY = gfx::safe_area()[1] + 44;
+        const float* safe = gfx::safe_area();
+        float backX = SDL_max(safe[0] + 44, 68.0f), backY = safe[1] > 0 ? safe[1] / 2 : 44;
         gfx::circle(backX, backY, 20, back);
         gfx::text("x", backX - 8, backY - 9, 16, ink);
         float tapX = 0, tapY = 0;
