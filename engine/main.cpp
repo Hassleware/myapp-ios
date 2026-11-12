@@ -134,6 +134,7 @@ void draw_list() {
     float w = gfx::view_width(), h = gfx::view_height();
     gfx::clear(0.06f, 0.07f, 0.10f);
     gfx::text("GAME LAB", 48, 48, 40, title);
+    gfx::text(std::to_string(games.size()) + (games.size() == 1 ? " GAME" : " GAMES"), 48, 98, 16, dim);
 
     float tapX = 0, tapY = 0;
     bool tapped = input::tap(tapX, tapY);
