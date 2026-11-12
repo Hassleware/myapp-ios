@@ -105,6 +105,7 @@ VkPipeline currentPipeline = VK_NULL_HANDLE;
 std::vector<Draw> draws;
 uint32_t batchCount = 0;
 std::vector<UiBox> uiBoxes;
+float safeInsets[4] = {0, 0, 0, 0};
 bool uiLogging = false;
 
 // ---- small matrix helpers (column-major, the same layout Vulkan and GLSL use) ----
@@ -914,6 +915,9 @@ void mesh(Mesh which, const float pos[3], const float size[3], float yawDegrees,
 
 float view_width() { return aspect() >= 1.0f ? VIEW_HEIGHT * aspect() : VIEW_HEIGHT; }
 float view_height() { return aspect() >= 1.0f ? VIEW_HEIGHT : VIEW_HEIGHT / aspect(); }
+
+void set_safe_area(const float insets[4]) { memcpy(safeInsets, insets, sizeof(safeInsets)); }
+const float* safe_area() { return safeInsets; }
 
 void ui_log(bool on) { uiLogging = on; }
 const std::vector<UiBox>& ui_boxes() { return uiBoxes; }

@@ -33,6 +33,11 @@ void circle(float cx, float cy, float radius, const float rgba[4]);
 void text(const std::string& s, float x, float y, float size, const float rgba[4]);
 float text_width(const std::string& s, float size);
 
+// The strips along each edge that a phone keeps for its notch, island, rounded corners and home bar,
+// in 2D units: left, top, right, bottom. The app sets them every frame; games read them with gfx.safe().
+void set_safe_area(const float insets[4]);
+const float* safe_area();
+
 // For the PC's layout check: while logging is on, every rect, circle and text drawn is remembered
 // as one box until the next begin_frame.
 struct UiBox {

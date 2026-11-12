@@ -149,6 +149,12 @@ int l_size(lua_State* l) {
     return 2;
 }
 
+// gfx.safe() -> left, top, right, bottom: how far to stay in from each edge to clear the notch and home bar.
+int l_safe(lua_State* l) {
+    for (int i = 0; i < 4; i++) lua_pushnumber(l, gfx::safe_area()[i]);
+    return 4;
+}
+
 std::string field(lua_State* l, const char* name) {
     lua_getfield(l, -1, name);
     std::string value = lua_isstring(l, -1) ? lua_tostring(l, -1) : "";
@@ -299,7 +305,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
 
     const luaL_Reg gfxFunctions[] = {{"clear", l_clear}, {"camera", l_camera}, {"light", l_light}, {"shader", l_shader},
                                      {"cube", l_cube}, {"sphere", l_sphere}, {"plane", l_plane}, {"rect", l_rect},
-                                     {"circle", l_circle}, {"text", l_text}, {"text_width", l_text_width}, {"size", l_size}, {nullptr, nullptr}};
+                                     {"circle", l_circle}, {"text", l_text}, {"text_width", l_text_width}, {"size", l_size}, {"safe", l_safe}, {nullptr, nullptr}};
     const luaL_Reg inputFunctions[] = {{"controls", l_controls}, {"stick", l_stick}, {"down", l_down}, {"pressed", l_pressed}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     register_table("gfx", gfxFunctions);

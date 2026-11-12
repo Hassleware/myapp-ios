@@ -87,9 +87,9 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | Engine on Linux with a software Vulkan driver: both demo games, custom shader, controls, game list, portrait and landscape | Tested |
 | Loader sync against `dev.py` on Linux: discovery, download, live edits, remote `play`, Lua errors sent to the PC, update notice | Tested |
 | **iPhone build of the first version**: compiled on GitHub first try, ran on the phone, rendered through MoltenVK, touch worked, found the PC by itself | Tested on device |
-| Windows PC build (`run <game>`) | **Not confirmed.** MSVC has never compiled this code as far as these notes know |
+| Windows PC build (`run <game>`) | Tested: builds with MSVC and runs both games |
 | Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa` served to the phone | Tested |
-| INSTALL UPDATE button | Game Lab is installed **inside LiveContainer**, so `sidestore://install?url=` was wrong (SideStore opened and failed with a bundle mismatch). Now `livecontainer://install?url=` (LiveContainer 3.3.0+). **Untested**: whether it works when opened from inside LiveContainer, and over plain `http://`. DOWNLOAD FILE (Safari) is the fallback |
+| Updating the app on the phone | Game Lab is installed **inside LiveContainer**. `sidestore://install` failed (bundle mismatch) and `livecontainer://install` failed ("LiveContainer must refresh to install apps": it won't install while an app runs inside it). The working route, **tested**: DOWNLOAD UPDATE (Safari saves the IPA), then **+** in LiveContainer. Don't retry in-app install links |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
 | `release <game>` standalone build | **Untested** |
 | App Store signing and upload | **Not built** |
@@ -101,7 +101,7 @@ When something from the untested rows fails, that is expected; fix it rather tha
 - `python tools/dev.py status` and `doctor`.
 - Phone-side `print()` output and Lua errors appear in the `dev.py` window. Errors also show on the phone's screen.
 - `GAMELAB_WINDOW=414x896` opens the PC build in a phone shape.
-- **F1** in the PC window steps through iPhone frames (11 to 17 Pro Max): the window takes the phone's shape and its rounded corners, notch or Dynamic Island and home bar are drawn on top. **F2** turns it. `GAMELAB_DEVICE=9` starts with the ninth. PC only (`draw_phone_frame` in `main.cpp`); sizes are approximate. It is a picture only: games still can't ask for safe-area insets.
+- **F1** in the PC window steps through iPhone frames (11 to 17 Pro Max): the window takes the phone's shape and its rounded corners, notch or Dynamic Island and home bar are drawn on top. **F2** turns it. `GAMELAB_DEVICE=9` starts with the ninth. PC only (`draw_phone_frame` in `main.cpp`); sizes are approximate. Games and the game list keep clear with `gfx.safe()` (left, top, right, bottom insets in 2D units): real values from `SDL_GetWindowSafeArea` on the phone (**untested on device**), simulated from the frame on the PC, zero with no frame.
 - **`python tools/dev.py check <game>`** (or `gamelab --check <game>`) runs the game in all 12 frames, sideways and upright, and prints every text, rect, circle or touch control that a corner, notch, island or home bar covers. **Run it after any change to a game's 2D drawing or controls.** It works by logging the boxes of 2D draws (`gfx::ui_log`), ignores anything over 60% of the screen as background, and only sees what the game draws in its first moments, so later screens (menus, game over) need a way to be reached before they can be checked.
 - `gamelab --phone <folder>` makes a desktop build behave like the loader: it ignores the repo and syncs into that folder (non-Windows only, since sync uses POSIX sockets).
 - Configure with `-DGFX_SCREENSHOT=ON`, then `GAMELAB_SHOT=out.bmp` saves a frame and quits (`GAMELAB_SHOT_FRAME=n` picks the frame). Useful for headless checks.

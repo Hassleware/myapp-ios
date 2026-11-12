@@ -26,5 +26,6 @@ function draw()
   gfx.camera(0, 7, 12, 0, 0, 0, 55)
   gfx.plane(0, 0, 0, 16, 16, 0.25, 0.30, 0.38)
   gfx.cube(x, y, z, 1, 1, 1, 0.36, 0.82, 0.63)
-  gfx.text("NEW GAME", 80, 24, 28, 1, 1, 1)
+  local left, top = gfx.safe()   -- room the phone needs for its notch or island
+  gfx.text("NEW GAME", left + 80, top + 24, 28, 1, 1, 1)
 end

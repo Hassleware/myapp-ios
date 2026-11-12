@@ -367,7 +367,8 @@ def advise_phone_build(build):
     if build and build != "dev" and build != current:
         say(f"! The app on the phone was built from older C++ (app {build}, repo {current}).")
         if ipa_build() == current:
-            say("  The new build is ready on this PC. On the phone, go to the game list and tap INSTALL UPDATE.")
+            say("  The new build is ready on this PC. On the phone, go to the game list and tap DOWNLOAD UPDATE,")
+            say("  then in LiveContainer tap + and pick GameLab.ipa.")
         else:
             say("  Game files still sync, but engine changes are missing there. To update it, type: ship")
 
@@ -560,7 +561,8 @@ def cmd_ship(message=None):
     save_state(shipped=native_now, ipa_build=native_now)
     say("")
     say(f"The app is built (build {native_now}) and saved on this PC. It was not published anywhere.")
-    say("On the phone: open Game Lab, go to the game list and tap INSTALL UPDATE.")
+    say("On the phone: open Game Lab, go to the game list and tap DOWNLOAD UPDATE,")
+    say("then in LiveContainer tap + and pick GameLab.ipa.")
     say("That needs this tool running (python tools/dev.py) and the phone on the same Wi-Fi.")
 
 

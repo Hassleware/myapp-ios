@@ -133,52 +133,50 @@ void draw_problem(const std::string& title, const std::string& detail) {
 
 void draw_list() {
     const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.55f}, row[4] = {1, 1, 1, 0.07f}, accent[4] = {0.36f, 0.82f, 0.63f, 1};
-    float w = gfx::view_width(), h = gfx::view_height();
+    // Everything sits inside the part of the screen the phone leaves free.
+    const float* safe = gfx::safe_area();
+    float left = safe[0] + 40, top = safe[1], right = gfx::view_width() - safe[2] - 40, bottom = gfx::view_height() - safe[3];
+    size_t columns = (size_t)((right - left - 16) / 16);   // letters of size 16 that fit on a line
     gfx::clear(0.06f, 0.07f, 0.10f);
-    gfx::text("GAME LAB", 48, 48, 40, title);
-    gfx::text(std::to_string(games.size()) + (games.size() == 1 ? " GAME" : " GAMES"), 48, 98, 16, dim);
+    gfx::text("GAME LAB", left + 8, top + 48, 40, title);
+    gfx::text(std::to_string(games.size()) + (games.size() == 1 ? " GAME" : " GAMES"), left + 8, top + 98, 16, dim);
 
     float tapX = 0, tapY = 0;
     bool tapped = input::tap(tapX, tapY);
-    float y = 130;
+    float y = top + 130;
     for (const std::string& name : games) {
-        gfx::rect(40, y, w - 80, 72, row);
-        gfx::rect(40, y, 6, 72, accent);
-        gfx::text(name, 72, y + 24, 24, title);
-        if (tapped && tapY >= y && tapY < y + 72 && tapX >= 40 && tapX <= w - 40) {
+        gfx::rect(left, y, right - left, 72, row);
+        gfx::rect(left, y, 6, 72, accent);
+        gfx::text(name, left + 32, y + 24, 24, title);
+        if (tapped && tapY >= y && tapY < y + 72 && tapX >= left && tapX <= right) {
             start_game(name);
             return;
         }
         y += 84;
     }
-    if (games.empty()) gfx::text("No games here yet.", 48, y + 10, 22, dim);
+    if (games.empty()) gfx::text("No games here yet.", left + 8, y + 10, 22, dim);
 
     std::string status;
 #if defined(LOADER_SYNC)
-    // The PC is holding a build made from newer C++ than this app. iOS doesn't let an app replace
-    // itself, so these hand the file to LiveContainer (where this app is installed), or to Safari to download it.
+    // The PC is holding a build made from newer C++ than this app. iOS doesn't let an app replace itself,
+    // and LiveContainer won't install anything while an app is running inside it, so the button only
+    // downloads the file through Safari. Installing it is done by hand in LiveContainer.
     std::string offered = devsync::available_build();
     if (!offered.empty() && offered != BUILD_FINGERPRINT) {
-        const float button[4] = {0.36f, 0.82f, 0.63f, 1}, plain[4] = {1, 1, 1, 0.14f}, dark[4] = {0.04f, 0.10f, 0.08f, 1};
-        float half = (w - 96) / 2;
-        gfx::text(wrap("NEW APP BUILD " + offered + " IS READY ON YOUR PC", (size_t)((w - 96) / 16)), 48, h - 172, 16, title);
-        gfx::rect(40, h - 142, half, 60, button);
-        gfx::text("INSTALL UPDATE", 40 + (half - gfx::text_width("INSTALL UPDATE", 20)) / 2, h - 122, 20, dark);
-        gfx::rect(56 + half, h - 142, half, 60, plain);
-        gfx::text("DOWNLOAD FILE", 56 + half + (half - gfx::text_width("DOWNLOAD FILE", 20)) / 2, h - 122, 20, title);
-        if (tapped && tapY >= h - 142 && tapY < h - 82) {
-            std::string url = devsync::update_url();
-            if (tapX < 48 + half) url = "livecontainer://install?url=" + url;
-            SDL_OpenURL(url.c_str());
-        }
+        const float button[4] = {0.36f, 0.82f, 0.63f, 1}, dark[4] = {0.04f, 0.10f, 0.08f, 1};
+        gfx::text(wrap("NEW APP BUILD " + offered + " IS READY. DOWNLOAD IT, THEN IN LIVECONTAINER TAP + AND PICK GAMELAB.IPA", columns),
+                  left + 8, bottom - 216, 16, title);
+        gfx::rect(left, bottom - 142, right - left, 60, button);
+        gfx::text("DOWNLOAD UPDATE", left + (right - left - gfx::text_width("DOWNLOAD UPDATE", 20)) / 2, bottom - 122, 20, dark);
+        if (tapped && tapY >= bottom - 142 && tapY < bottom - 82 && tapX >= left && tapX <= right) SDL_OpenURL(devsync::update_url().c_str());
     }
     status = devsync::status();
 #else
     status = "Running from the repo. Edit a game's files and it reloads.";
 #endif
-    gfx::text(wrap(status, (size_t)((w - 96) / 16)), 48, h - 60, 16, dim);
+    gfx::text(wrap(status, columns), left + 8, bottom - 60, 16, dim);
     std::string build = std::string("build ") + BUILD_FINGERPRINT;
-    gfx::text(build, w - 48 - gfx::text_width(build, 12), 56, 12, dim);
+    gfx::text(build, right - 8 - gfx::text_width(build, 12), top + 56, 12, dim);
 }
 
 #if !defined(SDL_PLATFORM_IOS)
@@ -411,6 +409,36 @@ void check_tick() {
 void draw_phone_frame() {}
 #endif
 
+// Tells the renderer which edges of the screen the phone keeps for itself, so the game list and the games
+// can stay clear of them. On the iPhone this is what iOS reports. On the PC it comes from the phone frame
+// being shown, if there is one.
+void update_safe_area() {
+    float safe[4] = {0, 0, 0, 0};
+    float w = gfx::view_width(), h = gfx::view_height();
+#if defined(SDL_PLATFORM_IOS)
+    SDL_Rect area;
+    int pointsW = 0, pointsH = 0;
+    if (SDL_GetWindowSafeArea(window, &area) && SDL_GetWindowSize(window, &pointsW, &pointsH) && pointsW > 0 && pointsH > 0) {
+        float kx = w / pointsW, ky = h / pointsH;
+        safe[0] = area.x * kx;
+        safe[1] = area.y * ky;
+        safe[2] = (pointsW - area.x - area.w) * kx;
+        safe[3] = (pointsH - area.y - area.h) * ky;
+    }
+#else
+    if (phoneIndex >= 0) {
+        const Phone& p = phones[phoneIndex];
+        float k = 720.0f / p.w;
+        // iOS keeps a strip a little deeper than the notch or island, on both ends when the phone is sideways,
+        // and a thinner one above the home bar.
+        float cut = (p.cutTop + p.cutH + (p.island ? 11 : 14)) * k;
+        if (w > h) { safe[0] = safe[2] = cut; safe[3] = 21 * k; }
+        else { safe[1] = cut; safe[3] = 34 * k; }
+    }
+#endif
+    gfx::set_safe_area(safe);
+}
+
 void frame() {
 #if !defined(SDL_PLATFORM_IOS)
     if (checking && !current.empty()) check_tick();
@@ -452,6 +480,7 @@ void frame() {
         input::end_frame();
         return;
     }
+    update_safe_area();
     if (!fatal.empty()) {
         draw_problem("CAN'T START", fatal);
     } else if (current.empty()) {
@@ -463,12 +492,13 @@ void frame() {
         script::draw();
         input::draw();
 #if !defined(SINGLE_GAME)
-        // A small button to get back to the game list, far enough in to clear a phone's rounded corner.
+        // A small button to get back to the game list, in the corner of the part of the screen the phone leaves free.
         const float back[4] = {0, 0, 0, 0.4f}, ink[4] = {1, 1, 1, 0.9f};
-        gfx::circle(68, 68, 20, back);
-        gfx::text("x", 60, 59, 16, ink);
+        float backX = gfx::safe_area()[0] + 44, backY = gfx::safe_area()[1] + 44;
+        gfx::circle(backX, backY, 20, back);
+        gfx::text("x", backX - 8, backY - 9, 16, ink);
         float tapX = 0, tapY = 0;
-        bool leave = input::tap(tapX, tapY) && tapX < 100 && tapY < 100;
+        bool leave = input::tap(tapX, tapY) && tapX < backX + 40 && tapY < backY + 40;
 #else
         bool leave = false;
 #endif
@@ -588,6 +618,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 #if !defined(SDL_PLATFORM_IOS)
     if (const char* device = SDL_getenv("GAMELAB_DEVICE")) {
         phoneIndex = SDL_clamp(SDL_atoi(device), 1, phoneCount) - 1;
+        phoneSideways = !SDL_strchr(device, 'u');   // "1u" starts upright
         apply_phone();
     }
 #endif

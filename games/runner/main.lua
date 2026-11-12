@@ -102,7 +102,8 @@ function draw()
   local w, h = gfx.size()
   local label = "COINS " .. score .. "/" .. #coins .. "   BEST " .. math.floor(best)
   local size = math.min(24, (w - 160) / #label)   -- shrink to fit when the phone is held upright
-  local top = h > w and 100 or 28                 -- upright, the notch or island sits where the score would go
+  local _, safeTop = gfx.safe()                   -- room the phone needs at the top for its notch or island
+  local top = safeTop + 28
   gfx.text(label, (w - gfx.text_width(label, size)) / 2, top, size, 1, 1, 1)
 
   if quipTime > 0 then
