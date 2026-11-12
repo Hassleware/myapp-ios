@@ -154,7 +154,7 @@ void draw_list() {
     std::string status;
 #if defined(LOADER_SYNC)
     // The PC is holding a build made from newer C++ than this app. iOS doesn't let an app replace
-    // itself, so these hand the file to SideStore, or to Safari to download it.
+    // itself, so these hand the file to LiveContainer (where this app is installed), or to Safari to download it.
     std::string offered = devsync::available_build();
     if (!offered.empty() && offered != BUILD_FINGERPRINT) {
         const float button[4] = {0.36f, 0.82f, 0.63f, 1}, plain[4] = {1, 1, 1, 0.14f}, dark[4] = {0.04f, 0.10f, 0.08f, 1};
@@ -166,7 +166,7 @@ void draw_list() {
         gfx::text("DOWNLOAD FILE", 56 + half + (half - gfx::text_width("DOWNLOAD FILE", 20)) / 2, h - 122, 20, title);
         if (tapped && tapY >= h - 142 && tapY < h - 82) {
             std::string url = devsync::update_url();
-            if (tapX < 48 + half) url = "sidestore://install?url=" + url;
+            if (tapX < 48 + half) url = "livecontainer://install?url=" + url;
             SDL_OpenURL(url.c_str());
         }
     }

@@ -88,7 +88,8 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | Loader sync against `dev.py` on Linux: discovery, download, live edits, remote `play`, Lua errors sent to the PC, update notice | Tested |
 | **iPhone build of the first version**: compiled on GitHub first try, ran on the phone, rendered through MoltenVK, touch worked, found the PC by itself | Tested on device |
 | Windows PC build (`run <game>`) | **Not confirmed.** MSVC has never compiled this code as far as these notes know |
-| Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa`, INSTALL UPDATE via `sidestore://install?url=` | **Untested on real hardware.** DOWNLOAD FILE (Safari) is the fallback |
+| Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa` served to the phone | Tested |
+| INSTALL UPDATE button | Game Lab is installed **inside LiveContainer**, so `sidestore://install?url=` was wrong (SideStore opened and failed with a bundle mismatch). Now `livecontainer://install?url=` (LiveContainer 3.3.0+). **Untested**: whether it works when opened from inside LiveContainer, and over plain `http://`. DOWNLOAD FILE (Safari) is the fallback |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
 | `release <game>` standalone build | **Untested** |
 | App Store signing and upload | **Not built** |

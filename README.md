@@ -53,7 +53,7 @@ Put `name.slang` in a game's `shaders/` folder and select it with `gfx.shader("n
 
 ## Updating the app on the phone
 
-Builds are never published. GitHub keeps each one as a private build file, `ship` fetches it to `tools/.ipa/` with your own login, and `dev.py` offers it to the phone over your Wi-Fi. When the PC holds a newer build than the app, the game list shows **INSTALL UPDATE** (hands the file to SideStore) and **DOWNLOAD FILE** (saves it through Safari, to install by hand).
+Builds are never published. GitHub keeps each one as a private build file, `ship` fetches it to `tools/.ipa/` with your own login, and `dev.py` offers it to the phone over your Wi-Fi. When the PC holds a newer build than the app, the game list shows **INSTALL UPDATE** (hands the file to LiveContainer, where the app is installed) and **DOWNLOAD FILE** (saves it through Safari, to install by hand).
 
 ## Releasing one game
 
