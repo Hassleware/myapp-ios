@@ -17,6 +17,7 @@ python tools/dev.py               watch the repo and serve the phone; type comma
 python tools/dev.py run runner    build the PC version and play a game
 python tools/dev.py ship "msg"    commit, push, build the phone app, fetch it to this PC
 python tools/dev.py status        what is out of date and what to do
+python tools/dev.py check runner  play a game inside every iPhone shape and list what each phone would hide
 ```
 
 ## Two kinds of change
@@ -46,6 +47,8 @@ include("other.lua")        print(...)   -- prints show in the dev.py window, fr
 ```
 
 2D drawing uses a screen whose shorter side is always 720 units, so layouts hold up in both orientations; `gfx.size()` gives the current width and height. On the PC, WASD or the arrow keys drive the first stick, and each button's `key` presses it.
+
+**iPhone frame on the PC:** press **F1** in the game window to step through iPhone shapes from the 11 to the 17 Pro Max, and **F2** to turn the phone. The window takes that phone's shape and the rounded corners, notch or Dynamic Island and home bar are drawn over the game, so you can see what a real phone would hide. `$env:GAMELAB_DEVICE = '9'` before `run` starts with the ninth phone in the list (the list is at the top of the phone-frame code in `engine/main.cpp`).
 
 ## Shaders
 

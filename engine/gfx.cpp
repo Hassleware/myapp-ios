@@ -104,6 +104,8 @@ float lightDir[4] = {-0.4f, -1.0f, -0.3f, 0.0f};
 VkPipeline currentPipeline = VK_NULL_HANDLE;
 std::vector<Draw> draws;
 uint32_t batchCount = 0;
+std::vector<UiBox> uiBoxes;
+bool uiLogging = false;
 
 // ---- small matrix helpers (column-major, the same layout Vulkan and GLSL use) ----
 
@@ -746,6 +748,7 @@ bool begin_frame() {
 
     draws.clear();
     batchCount = 0;
+    uiBoxes.clear();
     currentPipeline = pipeline3D;
     clearColor[0] = 0.06f; clearColor[1] = 0.07f; clearColor[2] = 0.10f;
     const float eye[3] = {0, 3, 8}, target[3] = {0, 0, 0};
@@ -912,7 +915,11 @@ void mesh(Mesh which, const float pos[3], const float size[3], float yawDegrees,
 float view_width() { return aspect() >= 1.0f ? VIEW_HEIGHT * aspect() : VIEW_HEIGHT; }
 float view_height() { return aspect() >= 1.0f ? VIEW_HEIGHT : VIEW_HEIGHT / aspect(); }
 
+void ui_log(bool on) { uiLogging = on; }
+const std::vector<UiBox>& ui_boxes() { return uiBoxes; }
+
 void rect(float x, float y, float w, float h, const float rgba[4]) {
+    if (uiLogging) uiBoxes.push_back({x, y, w, h, false, ""});
     push_2d(x, y, rgba);
     push_2d(x + w, y, rgba);
     push_2d(x + w, y + h, rgba);
@@ -922,6 +929,7 @@ void rect(float x, float y, float w, float h, const float rgba[4]) {
 }
 
 void circle(float cx, float cy, float radius, const float rgba[4]) {
+    if (uiLogging) uiBoxes.push_back({cx - radius, cy - radius, radius * 2, radius * 2, true, ""});
     const int segments = 28;
     for (int i = 0; i < segments; i++) {
         float a0 = 6.2831853f * i / segments, a1 = 6.2831853f * (i + 1) / segments;
@@ -933,6 +941,14 @@ void circle(float cx, float cy, float radius, const float rgba[4]) {
 
 // Text uses a built-in 8x8 pixel font, so it needs no texture. Each run of lit pixels is one rectangle.
 void text(const std::string& s, float x, float y, float size, const float rgba[4]) {
+    // Logged as one box for the whole text, not one per pixel run.
+    bool logging = uiLogging;
+    uiLogging = false;
+    if (logging && s.find_first_not_of(" \n") != std::string::npos) {
+        float lines = 1;
+        for (char ch : s) lines += ch == '\n';
+        uiBoxes.push_back({x, y, text_width(s, size), size * (1 + (lines - 1) * 1.25f), false, s});
+    }
     float cell = size / 8.0f, penX = x;
     for (unsigned char ch : s) {
         if (ch == '\n') { penX = x; y += size * 1.25f; continue; }
@@ -950,6 +966,7 @@ void text(const std::string& s, float x, float y, float size, const float rgba[4
         }
         penX += size;
     }
+    uiLogging = logging;
 }
 
 float text_width(const std::string& s, float size) {

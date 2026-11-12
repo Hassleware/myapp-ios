@@ -19,5 +19,7 @@ function draw()
   gfx.cube(3.5, 0, 0, 1.5, 1.5, 1.5, 0.55, 1.0, 0.50, -t * 40)
   gfx.shader()                              -- back to the standard shader
 
-  gfx.text("CUSTOM SHADER:\nshaders/pulse.slang", 80, 24, 18, 1, 1, 1)
+  local w, h = gfx.size()
+  -- Upright, the notch or island sits at the top, so the caption moves below it.
+  gfx.text("CUSTOM SHADER:\nshaders/pulse.slang", 80, h > w and 110 or 24, 18, 1, 1, 1)
 end

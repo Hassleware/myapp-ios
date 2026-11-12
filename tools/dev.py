@@ -7,6 +7,7 @@
     python tools/dev.py ship [msg]   commit, push, wait for the iPhone build, fetch it for the phone
     python tools/dev.py status       what is out of date, and what to do about it
     python tools/dev.py release <game>   build one game as its own standalone app
+    python tools/dev.py check <game>     list any 2D drawing or touch control an iPhone's notch, island or corners would hide
     python tools/dev.py doctor       check that the tools this repo needs are installed
 
 Two kinds of change, and the tool tells you which one you made:
@@ -481,6 +482,17 @@ def build_pc():
     return candidates[0]
 
 
+def cmd_check(game):
+    """Plays a game inside every iPhone frame, sideways and upright, and lists what each phone would hide."""
+    if game not in game_names():
+        say(f"No game called '{game}'. Games: {', '.join(game_names()) or 'none yet'}")
+        return
+    exe = build_pc()
+    if exe:
+        say(f"Checking {game} on every iPhone shape. The window will change size for a few seconds.")
+        subprocess.run([str(exe), "--check", game], cwd=str(REPO))
+
+
 def cmd_run(game=None):
     if game and game not in game_names():
         say(f"No game called '{game}'. Games: {', '.join(game_names()) or 'none yet'}")
@@ -752,6 +764,8 @@ def main():
         cmd_ship(" ".join(args[1:]) or None)
     elif command == "status":
         cmd_status()
+    elif command == "check" and len(args) > 1:
+        cmd_check(args[1])
     elif command == "release" and len(args) > 1:
         cmd_release(args[1])
     elif command == "doctor":

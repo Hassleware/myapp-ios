@@ -1,6 +1,7 @@
 // The renderer: Vulkan on every platform. On the iPhone, MoltenVK runs it on Metal.
 #pragma once
 #include <string>
+#include <vector>
 
 struct SDL_Window;
 
@@ -31,6 +32,16 @@ void rect(float x, float y, float w, float h, const float rgba[4]);
 void circle(float cx, float cy, float radius, const float rgba[4]);
 void text(const std::string& s, float x, float y, float size, const float rgba[4]);
 float text_width(const std::string& s, float size);
+
+// For the PC's layout check: while logging is on, every rect, circle and text drawn is remembered
+// as one box until the next begin_frame.
+struct UiBox {
+    float x, y, w, h;
+    bool round;          // a circle
+    std::string text;    // what was written, or empty for a shape
+};
+void ui_log(bool on);
+const std::vector<UiBox>& ui_boxes();
 
 // The last shader problem, shown on screen by the engine. Empty when there is none.
 const std::string& shader_error();
