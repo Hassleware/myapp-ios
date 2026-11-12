@@ -758,7 +758,7 @@ void end_frame(float timeSeconds) {
     memcpy(frame.viewProj, viewProj, sizeof(viewProj));
     identity(frame.ortho);
     frame.ortho[0] = 2.0f / view_width();
-    frame.ortho[5] = 2.0f / VIEW_HEIGHT;
+    frame.ortho[5] = 2.0f / view_height();
     frame.ortho[12] = -1.0f;
     frame.ortho[13] = -1.0f;
     memcpy(frame.lightDir, lightDir, sizeof(lightDir));
@@ -909,7 +909,8 @@ void mesh(Mesh which, const float pos[3], const float size[3], float yawDegrees,
     draws.push_back(d);
 }
 
-float view_width() { return VIEW_HEIGHT * aspect(); }
+float view_width() { return aspect() >= 1.0f ? VIEW_HEIGHT * aspect() : VIEW_HEIGHT; }
+float view_height() { return aspect() >= 1.0f ? VIEW_HEIGHT : VIEW_HEIGHT / aspect(); }
 
 void rect(float x, float y, float w, float h, const float rgba[4]) {
     push_2d(x, y, rgba);

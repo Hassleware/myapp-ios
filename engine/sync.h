@@ -18,6 +18,10 @@ void stop();
 std::string status();              // one line for the game list screen
 bool busy();                       // true while files are being written
 bool next_command(Command& out);   // commands typed on the PC
+// The app build waiting on the PC ("" if none), and where to fetch it from.
+std::string available_build();
+std::string update_url();
+
 void log(const char* level, const std::string& game, const std::string& message);
 
 }  // namespace devsync

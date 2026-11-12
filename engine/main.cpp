@@ -124,14 +124,14 @@ std::string wrap(const std::string& text, size_t width) {
 void draw_problem(const std::string& title, const std::string& detail) {
     const float panel[4] = {0.10f, 0.02f, 0.03f, 0.92f}, red[4] = {1.0f, 0.45f, 0.42f, 1}, white[4] = {1, 1, 1, 0.92f};
     float w = gfx::view_width();
-    gfx::rect(0, 0, w, 720, panel);
+    gfx::rect(0, 0, w, gfx::view_height(), panel);
     gfx::text(title, 40, 60, 28, red);
     gfx::text(wrap(detail, (size_t)((w - 80) / 16)), 40, 120, 16, white);
 }
 
 void draw_list() {
     const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.55f}, row[4] = {1, 1, 1, 0.07f}, accent[4] = {0.36f, 0.82f, 0.63f, 1};
-    float w = gfx::view_width();
+    float w = gfx::view_width(), h = gfx::view_height();
     gfx::clear(0.06f, 0.07f, 0.10f);
     gfx::text("GAME LAB", 48, 48, 40, title);
 
@@ -152,11 +152,28 @@ void draw_list() {
 
     std::string status;
 #if defined(LOADER_SYNC)
+    // The PC is holding a build made from newer C++ than this app. iOS doesn't let an app replace
+    // itself, so these hand the file to SideStore, or to Safari to download it.
+    std::string offered = devsync::available_build();
+    if (!offered.empty() && offered != BUILD_FINGERPRINT) {
+        const float button[4] = {0.36f, 0.82f, 0.63f, 1}, plain[4] = {1, 1, 1, 0.14f}, dark[4] = {0.04f, 0.10f, 0.08f, 1};
+        float half = (w - 96) / 2;
+        gfx::text(wrap("NEW APP BUILD " + offered + " IS READY ON YOUR PC", (size_t)((w - 96) / 16)), 48, h - 172, 16, title);
+        gfx::rect(40, h - 142, half, 60, button);
+        gfx::text("INSTALL UPDATE", 40 + (half - gfx::text_width("INSTALL UPDATE", 20)) / 2, h - 122, 20, dark);
+        gfx::rect(56 + half, h - 142, half, 60, plain);
+        gfx::text("DOWNLOAD FILE", 56 + half + (half - gfx::text_width("DOWNLOAD FILE", 20)) / 2, h - 122, 20, title);
+        if (tapped && tapY >= h - 142 && tapY < h - 82) {
+            std::string url = devsync::update_url();
+            if (tapX < 48 + half) url = "sidestore://install?url=" + url;
+            SDL_OpenURL(url.c_str());
+        }
+    }
     status = devsync::status();
 #else
     status = "Running from the repo. Edit a game's files and it reloads.";
 #endif
-    gfx::text(wrap(status, (size_t)((w - 96) / 16)), 48, 660, 16, dim);
+    gfx::text(wrap(status, (size_t)((w - 96) / 16)), 48, h - 60, 16, dim);
     std::string build = std::string("build ") + BUILD_FINGERPRINT;
     gfx::text(build, w - 48 - gfx::text_width(build, 12), 56, 12, dim);
 }
@@ -235,7 +252,8 @@ void frame() {
     // Debugging aid: GAMELAB_SHOT=file.bmp saves the 30th frame and quits.
     static int frames = 0;
     const char* shot = SDL_getenv("GAMELAB_SHOT");
-    if (shot && ++frames == 30) {
+    const char* when = SDL_getenv("GAMELAB_SHOT_FRAME");
+    if (shot && ++frames == (when ? SDL_atoi(when) : 30)) {
         gfx::screenshot(shot);
         SDL_Event quit = {};
         quit.type = SDL_EVENT_QUIT;
@@ -261,7 +279,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 #if defined(SDL_PLATFORM_IOS)
     flags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
 #endif
-    window = SDL_CreateWindow("Game Lab", 1280, 720, flags);
+    int width = 1280, height = 720;
+    if (const char* size = SDL_getenv("GAMELAB_WINDOW")) SDL_sscanf(size, "%dx%d", &width, &height);   // e.g. 414x896 to try a phone shape
+    window = SDL_CreateWindow("Game Lab", width, height, flags);
     if (!window) {
         SDL_Log("Couldn't open a window: %s", SDL_GetError());
         return SDL_APP_FAILURE;

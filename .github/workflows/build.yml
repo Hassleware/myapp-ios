@@ -23,7 +23,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   MOLTENVK_VERSION: v1.4.2
@@ -90,12 +90,11 @@ jobs:
           mkdir Payload && cp -R "$app" Payload/
           zip -qr "$IPA" Payload
 
-      - name: Publish as a GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          latest="--latest"
-          if [ -n "${{ inputs.game }}" ]; then latest="--latest=false"; fi
-          gh release create "$TAG" "$IPA" $latest \
-            --title "$APP_NAME build ${{ github.run_number }} ($FINGERPRINT)" \
-            --notes "Built from commit ${{ github.sha }}. Native code fingerprint: $FINGERPRINT"
+      # Not published anywhere. Only someone signed in to this repo can fetch it, which tools/dev.py does for you.
+      - name: Keep the IPA as a private build file
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: ${{ env.IPA }}
+          retention-days: 30
+          if-no-files-found: error

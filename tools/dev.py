@@ -4,7 +4,7 @@
     python tools/dev.py              watch the repo, serve the phone, and say what each change needs
     python tools/dev.py run <game>   build the PC version and play a game
     python tools/dev.py new <name>   create a game from the template
-    python tools/dev.py ship [msg]   commit, push, wait for the iPhone build, print the install link
+    python tools/dev.py ship [msg]   commit, push, wait for the iPhone build, fetch it for the phone
     python tools/dev.py status       what is out of date, and what to do about it
     python tools/dev.py release <game>   build one game as its own standalone app
     python tools/dev.py doctor       check that the tools this repo needs are installed
@@ -39,6 +39,7 @@ STATE_FILE = TOOLS / ".state.json"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 SLANG_VERSION = "2026.22"
 IPA_NAME = "GameLab.ipa"
+IPA_DIR = TOOLS / ".ipa"   # app builds fetched from GitHub, served to the phone, never published
 
 NATIVE_DIRS = ["engine", "ios"]
 NATIVE_FILES = ["CMakeLists.txt"]
@@ -283,7 +284,10 @@ class Handler(BaseHTTPRequestHandler):
             note_phone(self.client_address[0], build)
             with _lock:
                 command = dict(_command)
-            return self.reply(f"{games_revision()}\n{command['id']}\n{command['action']}\n{command['game']}\n")
+            return self.reply(f"{games_revision()}\n{command['id']}\n{command['action']}\n{command['game']}\n{ipa_build()}\n")
+        if parts == ["app", IPA_NAME] and (IPA_DIR / IPA_NAME).is_file():
+            say("  [phone] downloading the new app build")
+            return self.reply((IPA_DIR / IPA_NAME).read_bytes(), kind="application/octet-stream")
         if parts == ["api", "manifest"]:
             lines = []
             for name in game_names():
@@ -311,6 +315,17 @@ class Handler(BaseHTTPRequestHandler):
         self.reply("Not found", 404)
 
 
+class QuietServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # The app finds this PC by briefly connecting to every address on the Wi-Fi and hanging up.
+        # Those hang-ups, and a phone going to sleep mid-request, are normal and not worth a traceback.
+        if isinstance(sys.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def note_phone(address, build):
     now = time.time()
     with _lock:
@@ -319,6 +334,26 @@ def note_phone(address, build):
     if was_away:
         say(f"  [phone] connected from {address}, running app build {build or 'unknown'}")
         advise_phone_build(build)
+
+
+def ipa_build():
+    """Fingerprint of the app build waiting on this PC for the phone, or empty."""
+    return load_state().get("ipa_build", "") if (IPA_DIR / IPA_NAME).is_file() else ""
+
+
+def download_ipa(run_id, name):
+    """Fetches a finished build from GitHub using your own login. Returns the file, or None."""
+    shutil.rmtree(IPA_DIR / "_incoming", ignore_errors=True)
+    result = subprocess.run(["gh", "run", "download", str(run_id), "-n", "ipa", "-D", str(IPA_DIR / "_incoming")],
+                            cwd=REPO, capture_output=True, text=True)
+    found = list((IPA_DIR / "_incoming").glob("*.ipa"))
+    if result.returncode != 0 or not found:
+        say("! Couldn't fetch the build from GitHub: " + (result.stderr.strip() or "no IPA in the build"))
+        return None
+    target = IPA_DIR / name
+    found[0].replace(target)
+    shutil.rmtree(IPA_DIR / "_incoming", ignore_errors=True)
+    return target
 
 
 def phone_connected():
@@ -330,7 +365,10 @@ def advise_phone_build(build):
     current = fingerprint()
     if build and build != "dev" and build != current:
         say(f"! The app on the phone was built from older C++ (app {build}, repo {current}).")
-        say("  Game files still sync, but engine changes are missing there. To update it, type: ship")
+        if ipa_build() == current:
+            say("  The new build is ready on this PC. On the phone, go to the game list and tap INSTALL UPDATE.")
+        else:
+            say("  Game files still sync, but engine changes are missing there. To update it, type: ship")
 
 
 def lan_address():
@@ -459,12 +497,6 @@ def git(*args):
     return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True)
 
 
-def repo_slug():
-    result = subprocess.run(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-                            cwd=REPO, capture_output=True, text=True)
-    return result.stdout.strip() if result.returncode == 0 else None
-
-
 def wait_for_run(sha):
     say("Waiting for GitHub to start the build ...")
     for _ in range(30):
@@ -511,12 +543,13 @@ def cmd_ship(message=None):
     if not ok:
         say(f"! The iPhone build failed. See why with: gh run view {run_id} --log-failed")
         return
-    save_state(shipped=native_now)
-    slug = repo_slug() or "<you>/<repo>"
+    if not download_ipa(run_id, IPA_NAME):
+        return
+    save_state(shipped=native_now, ipa_build=native_now)
     say("")
-    say(f"The app is built (build {native_now}). Install it on the phone:")
-    say(f"  https://github.com/{slug}/releases/latest/download/{IPA_NAME}")
-    say("  Open that link in Safari on the iPhone, then install the file with SideStore or LiveContainer.")
+    say(f"The app is built (build {native_now}) and saved on this PC. It was not published anywhere.")
+    say("On the phone: open Game Lab, go to the game list and tap INSTALL UPDATE.")
+    say("That needs this tool running (python tools/dev.py) and the phone on the same Wi-Fi.")
 
 
 def cmd_release(game):
@@ -527,11 +560,30 @@ def cmd_release(game):
     bundle = "com.starter." + game.replace("-", "")
     say(f"Asking GitHub to build '{game}' as its own app (name \"{title}\", id {bundle}).")
     say("Commit and push first if you have changes: the build uses what is on GitHub.")
+    started = time.time()
     ok = subprocess.run(["gh", "workflow", "run", "build.yml", "-f", f"game={game}", "-f", f"app_name={title}", "-f", f"bundle_id={bundle}"],
                         cwd=REPO).returncode == 0
-    if ok:
-        say("Started. Watch it with: gh run watch")
-        say(f"When it finishes, {game}.ipa appears under Releases. It contains only that game and no Wi-Fi syncing.")
+    if not ok:
+        return
+    say("Waiting for GitHub to start the build ...")
+    run_id = None
+    for _ in range(30):
+        time.sleep(4)
+        result = subprocess.run(["gh", "run", "list", "--workflow", "build.yml", "--event", "workflow_dispatch", "--limit", "1",
+                                 "--json", "databaseId,createdAt", "--jq", ".[0] | \"\\(.databaseId) \\(.createdAt)\""],
+                                cwd=REPO, capture_output=True, text=True).stdout.split()
+        if len(result) == 2 and time.mktime(time.strptime(result[1], "%Y-%m-%dT%H:%M:%SZ")) - time.timezone >= started - 60:
+            run_id = result[0]
+            break
+    if not run_id:
+        say("Couldn't find the build. Check it with: gh run list")
+        return
+    if subprocess.run(["gh", "run", "watch", run_id, "--exit-status"], cwd=REPO).returncode != 0:
+        say(f"! The build failed. See why with: gh run view {run_id} --log-failed")
+        return
+    target = download_ipa(run_id, f"{game}.ipa")
+    if target:
+        say(f"Saved {target.relative_to(REPO)}. It contains only that game and no Wi-Fi syncing.")
         say("It is unsigned: fine for SideStore. For the App Store it still needs signing with your Apple developer account.")
 
 
@@ -660,11 +712,10 @@ def cmd_watch():
     GAMES.mkdir(exist_ok=True)
     compile_all_shaders()
     try:
-        server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+        server = QuietServer(("0.0.0.0", PORT), Handler)
     except OSError:
         say(f"! Port {PORT} is in use. Is this tool already running in another terminal?")
         return
-    server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     stop = threading.Event()
     threading.Thread(target=watch_loop, args=(stop,), daemon=True).start()

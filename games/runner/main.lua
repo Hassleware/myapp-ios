@@ -83,5 +83,6 @@ function draw()
 
   local w = gfx.size()
   local label = "COINS " .. score .. "/" .. #coins .. "   BEST " .. math.floor(best)
-  gfx.text(label, (w - gfx.text_width(label, 24)) / 2, 28, 24, 1, 1, 1)
+  local size = math.min(24, (w - 160) / #label)   -- shrink to fit when the phone is held upright
+  gfx.text(label, (w - gfx.text_width(label, size)) / 2, 28, size, 1, 1, 1)
 end

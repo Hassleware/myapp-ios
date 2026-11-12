@@ -22,7 +22,7 @@ bool tapped = false;
 float tapX = 0, tapY = 0;
 
 float screen_w() { return gfx::view_width(); }
-float screen_h() { return 720.0f; }
+float screen_h() { return gfx::view_height(); }
 float radius_of(const State& s) { return s.def.size * SDL_min(screen_w(), screen_h()); }
 
 void move_stick(State& s, float px, float py) {

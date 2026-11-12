@@ -24,8 +24,9 @@ void light(float x, float y, float z);
 void shader(const std::string& name);   // "" selects the engine's standard shader
 void mesh(Mesh which, const float pos[3], const float size[3], float yawDegrees, const float rgba[4]);
 
-// 2D drawing uses a screen that is always 720 units tall. view_width() gives its width.
+// 2D drawing uses a screen whose shorter side is always 720 units, whichever way the phone is held.
 float view_width();
+float view_height();
 void rect(float x, float y, float w, float h, const float rgba[4]);
 void circle(float cx, float cy, float radius, const float rgba[4]);
 void text(const std::string& s, float x, float y, float size, const float rgba[4]);

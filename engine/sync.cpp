@@ -33,7 +33,7 @@ std::mutex lock;
 std::string statusText = "Looking for your PC...";
 std::deque<Command> commands;
 std::deque<std::string> logs;
-std::string gamesRoot, settingsRoot, buildId;
+std::string gamesRoot, settingsRoot, buildId, offeredBuild, serverHost;
 
 void set_status(const std::string& text) {
     std::lock_guard<std::mutex> guard(lock);
@@ -333,7 +333,7 @@ void run() {
             failures = 0;
         }
 
-        // Reply: revision, command id, action, game - one per line.
+        // Reply: revision, command id, action, game, app build held by the PC - one per line.
         std::string reply;
         if (!get(host, "/api/state?build=" + url_encode(buildId), reply)) {
             if (++failures >= 3) host.clear();
@@ -343,7 +343,12 @@ void run() {
         }
         failures = 0;
         std::vector<std::string> lines = split(reply, '\n');
-        while (lines.size() < 4) lines.push_back("");
+        while (lines.size() < 5) lines.push_back("");
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            offeredBuild = trim(lines[4]);
+            serverHost = host;
+        }
 
         if (lines[0] != lastRevision) {
             set_status("Syncing...");
@@ -404,6 +409,16 @@ bool next_command(Command& out) {
     out = commands.front();
     commands.pop_front();
     return true;
+}
+
+std::string available_build() {
+    std::lock_guard<std::mutex> guard(lock);
+    return offeredBuild;
+}
+
+std::string update_url() {
+    std::lock_guard<std::mutex> guard(lock);
+    return "http://" + serverHost + ":" + std::to_string(PORT) + "/app/GameLab.ipa";
 }
 
 void log(const char* level, const std::string& game, const std::string& message) {

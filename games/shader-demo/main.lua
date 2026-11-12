@@ -19,5 +19,5 @@ function draw()
   gfx.cube(3.5, 0, 0, 1.5, 1.5, 1.5, 0.55, 1.0, 0.50, -t * 40)
   gfx.shader()                              -- back to the standard shader
 
-  gfx.text("CUSTOM SHADER: shaders/pulse.slang", 80, 28, 20, 1, 1, 1)
+  gfx.text("CUSTOM SHADER:\nshaders/pulse.slang", 80, 24, 18, 1, 1, 1)
 end

@@ -145,7 +145,7 @@ int l_text_width(lua_State* l) {
 
 int l_size(lua_State* l) {
     lua_pushnumber(l, gfx::view_width());
-    lua_pushnumber(l, 720);
+    lua_pushnumber(l, gfx::view_height());
     return 2;
 }
 
