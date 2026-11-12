@@ -69,6 +69,7 @@ void mouse_position(const SDL_Event& event, float x, float y, float& nx, float& 
     SDL_GetWindowSize(SDL_GetWindowFromID(event.motion.windowID), &w, &h);
     nx = w > 0 ? x / w : 0;
     ny = h > 0 ? y / h : 0;
+    gfx::window_to_view(nx, ny);
 }
 
 State* find(const std::string& id) {

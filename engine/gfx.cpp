@@ -137,7 +137,13 @@ void cross3(const float a[3], const float b[3], float out[3]) {
 
 float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
-float aspect() { return extent.height ? (float)extent.width / (float)extent.height : 1.0f; }
+// The part of the window the game is drawn in: all of it, unless a border has been asked for.
+int bezel = 0;
+int inset() { return (uint32_t)bezel * 4 < SDL_min(extent.width, extent.height) ? bezel : 0; }
+float inner_width() { return (float)extent.width - 2 * inset(); }
+float inner_height() { return (float)extent.height - 2 * inset(); }
+
+float aspect() { return extent.height ? inner_width() / inner_height() : 1.0f; }
 
 // ---- Vulkan helpers ----
 
@@ -767,8 +773,8 @@ void end_frame(float timeSeconds) {
     frame.ortho[13] = -1.0f;
     memcpy(frame.lightDir, lightDir, sizeof(lightDir));
     frame.params[0] = timeSeconds;
-    frame.params[1] = (float)extent.width;
-    frame.params[2] = (float)extent.height;
+    frame.params[1] = inner_width();
+    frame.params[2] = inner_height();
     frame.params[3] = 0;
     memcpy(frameBuffer.mapped, &frame, sizeof(frame));
 
@@ -779,9 +785,11 @@ void end_frame(float timeSeconds) {
     vkBeginCommandBuffer(cmd, &begin);
 
     VkClearValue clears[2] = {};
-    clears[0].color.float32[0] = clearColor[0];
-    clears[0].color.float32[1] = clearColor[1];
-    clears[0].color.float32[2] = clearColor[2];
+    if (inset() == 0) {
+        clears[0].color.float32[0] = clearColor[0];
+        clears[0].color.float32[1] = clearColor[1];
+        clears[0].color.float32[2] = clearColor[2];
+    }
     clears[0].color.float32[3] = 1.0f;
     clears[1].depthStencil.depth = 1.0f;
     VkRenderPassBeginInfo pass = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -792,8 +800,18 @@ void end_frame(float timeSeconds) {
     pass.pClearValues = clears;
     vkCmdBeginRenderPass(cmd, &pass, VK_SUBPASS_CONTENTS_INLINE);
 
-    VkViewport viewport = {0, 0, (float)extent.width, (float)extent.height, 0.0f, 1.0f};
-    VkRect2D scissor = {{0, 0}, extent};
+    int edge = inset();
+    VkViewport viewport = {(float)edge, (float)edge, inner_width(), inner_height(), 0.0f, 1.0f};
+    VkRect2D scissor = {{edge, edge}, {(uint32_t)inner_width(), (uint32_t)inner_height()}};
+    if (edge > 0) {
+        // The whole window was cleared to black for the border. Fill the picture inside it with the game's colour.
+        VkClearAttachment fill = {VK_IMAGE_ASPECT_COLOR_BIT, 0, clears[0]};
+        fill.clearValue.color.float32[0] = clearColor[0];
+        fill.clearValue.color.float32[1] = clearColor[1];
+        fill.clearValue.color.float32[2] = clearColor[2];
+        VkClearRect area = {scissor, 0, 1};
+        vkCmdClearAttachments(cmd, 1, &fill, 1, &area);
+    }
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &frameSet, 0, nullptr);
@@ -915,6 +933,14 @@ void mesh(Mesh which, const float pos[3], const float size[3], float yawDegrees,
 
 float view_width() { return aspect() >= 1.0f ? VIEW_HEIGHT * aspect() : VIEW_HEIGHT; }
 float view_height() { return aspect() >= 1.0f ? VIEW_HEIGHT : VIEW_HEIGHT / aspect(); }
+
+void set_bezel(int pixels) { bezel = pixels; }
+
+void window_to_view(float& x, float& y) {
+    if (inset() == 0) return;
+    x = (x * extent.width - inset()) / inner_width();
+    y = (y * extent.height - inset()) / inner_height();
+}
 
 void set_safe_area(const float insets[4]) { memcpy(safeInsets, insets, sizeof(safeInsets)); }
 const float* safe_area() { return safeInsets; }

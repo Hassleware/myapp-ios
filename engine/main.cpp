@@ -189,20 +189,21 @@ struct Phone {
     float w, h, corner;
     bool island;                  // a Dynamic Island (floating pill) rather than a notch
     float cutW, cutH, cutTop;     // the notch or island: its size, and its gap from the top edge
+    float body;                   // how far the phone's black body reaches past the screen on every side
 };
 const Phone phones[] = {
-    {"iPhone 11 / XR", 414, 896, 41.5f, false, 230, 33, 0},
-    {"iPhone 11 Pro", 375, 812, 39, false, 209, 30, 0},
-    {"iPhone 11 Pro Max", 414, 896, 39, false, 209, 30, 0},
-    {"iPhone 12 mini / 13 mini", 375, 812, 44, false, 211, 32, 0},   // the 12 mini's notch, the wider of the two
-    {"iPhone 12 / 12 Pro", 390, 844, 47.3f, false, 211, 32, 0},
-    {"iPhone 12 Pro Max", 428, 926, 53.3f, false, 211, 32, 0},
-    {"iPhone 13 / 13 Pro / 14", 390, 844, 47.3f, false, 162, 34, 0},
-    {"iPhone 13 Pro Max / 14 Plus", 428, 926, 53.3f, false, 162, 34, 0},
-    {"iPhone 14 Pro / 15 / 15 Pro / 16", 393, 852, 55, true, 126, 37, 11},
-    {"iPhone 14 Pro Max / 15 Plus / 15 Pro Max / 16 Plus", 430, 932, 55, true, 126, 37, 11},
-    {"iPhone 16 Pro / 17", 402, 874, 62, true, 126, 37, 14},
-    {"iPhone 16 Pro Max / 17 Pro Max", 440, 956, 62, true, 126, 37, 14},
+    {"iPhone 11 / XR", 414, 896, 41.5f, false, 230, 33, 0, 36},
+    {"iPhone 11 Pro", 375, 812, 39, false, 209, 30, 0, 27},
+    {"iPhone 11 Pro Max", 414, 896, 39, false, 209, 30, 0, 27},
+    {"iPhone 12 mini / 13 mini", 375, 812, 44, false, 211, 32, 0, 21},   // the 12 mini's notch, the wider of the two
+    {"iPhone 12 / 12 Pro", 390, 844, 47.3f, false, 211, 32, 0, 21},
+    {"iPhone 12 Pro Max", 428, 926, 53.3f, false, 211, 32, 0, 21},
+    {"iPhone 13 / 13 Pro / 14", 390, 844, 47.3f, false, 162, 34, 0, 21},
+    {"iPhone 13 Pro Max / 14 Plus", 428, 926, 53.3f, false, 162, 34, 0, 21},
+    {"iPhone 14 Pro / 15 / 15 Pro / 16", 393, 852, 55, true, 126, 37, 11, 19},
+    {"iPhone 14 Pro Max / 15 Plus / 15 Pro Max / 16 Plus", 430, 932, 55, true, 126, 37, 11, 18},
+    {"iPhone 16 Pro / 17", 402, 874, 62, true, 126, 37, 14, 14},
+    {"iPhone 16 Pro Max / 17 Pro Max", 440, 956, 62, true, 126, 37, 14, 14},
 };
 const int phoneCount = (int)(sizeof(phones) / sizeof(phones[0]));
 int phoneIndex = -1;          // -1: no phone frame
@@ -212,16 +213,19 @@ bool phoneSideways = true;
 void apply_phone() {
     SDL_RestoreWindow(window);
     if (phoneIndex < 0) {
+        gfx::set_bezel(0);
         SDL_SetWindowSize(window, 1280, 720);
         SDL_SetWindowTitle(window, "Game Lab   (F1: iPhone frame)");
     } else {
+        // The window is the whole phone: the screen plus the black body around it.
         const Phone& p = phones[phoneIndex];
-        float w = phoneSideways ? p.h : p.w, h = phoneSideways ? p.w : p.h;
+        float w = (phoneSideways ? p.h : p.w) + 2 * p.body, h = (phoneSideways ? p.w : p.h) + 2 * p.body;
         float scale = SDL_GetWindowDisplayScale(window);
         SDL_Rect usable;
         if (SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable))
             scale = SDL_min(scale, SDL_min((usable.w - 40) / w, (usable.h - 80) / h));
         if (scale <= 0) scale = 1;
+        gfx::set_bezel((int)(p.body * scale * SDL_GetWindowPixelDensity(window)));
         SDL_SetWindowSize(window, (int)(w * scale), (int)(h * scale));
         SDL_SetWindowTitle(window, (std::string("Game Lab - ") + p.name + "   (F1: next phone, F2: turn)").c_str());
     }
@@ -492,11 +496,14 @@ void frame() {
         script::draw();
         input::draw();
 #if !defined(SINGLE_GAME)
-        // A small button to get back to the game list. Sideways it sits just past the notch or island. Upright it
-        // sits beside the notch or island, where iOS shows the clock, far enough in to clear the rounded corner.
+        // A small button to get back to the game list, tucked into the screen's top-left corner. It sits on the
+        // diagonal out of the corner, the same distance from the curve all the way round. iOS doesn't say how round
+        // the corners are, so the curve is taken to be nearly as deep as the strip kept for the notch or island.
         const float back[4] = {0, 0, 0, 0.4f}, ink[4] = {1, 1, 1, 0.9f};
         const float* safe = gfx::safe_area();
-        float backX = SDL_max(safe[0] + 44, 68.0f), backY = safe[1] > 0 ? safe[1] / 2 : 44;
+        float curve = 0.95f * SDL_max(safe[0], safe[1]), gap = 14, backX = 44;
+        if (curve > 20 + gap) backX = curve - (curve - 20 - gap) * 0.7071f;
+        float backY = backX;
         gfx::circle(backX, backY, 20, back);
         gfx::text("x", backX - 8, backY - 9, 16, ink);
         float tapX = 0, tapY = 0;

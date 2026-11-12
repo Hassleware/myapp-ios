@@ -38,6 +38,11 @@ float text_width(const std::string& s, float size);
 void set_safe_area(const float insets[4]);
 const float* safe_area();
 
+// PC only: leaves a black border this many pixels wide around the picture, which stands in for a phone's body.
+void set_bezel(int pixels);
+// Turns a position in the window (0 to 1 across and down) into a position in the picture inside that border.
+void window_to_view(float& x, float& y);
+
 // For the PC's layout check: while logging is on, every rect, circle and text drawn is remembered
 // as one box until the next begin_frame.
 struct UiBox {
