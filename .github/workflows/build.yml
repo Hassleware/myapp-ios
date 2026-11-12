@@ -60,10 +60,20 @@ jobs:
           else
             echo "IPA=GameLab.ipa" >> "$GITHUB_ENV"
             echo "TAG=loader-${{ github.run_number }}" >> "$GITHUB_ENV"
-            echo "EXTRA=-DAPP_BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+            # SINGLE_GAME is set to empty on purpose: the reused build folder may remember a standalone build.
+            echo "EXTRA=-DSINGLE_GAME= -DAPP_BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
             echo "APP_NAME=Game Lab" >> "$GITHUB_ENV"
             echo "BUNDLE_ID=com.starter.gamelab" >> "$GITHUB_ENV"
           fi
+          echo "XCODE=$(xcodebuild -version | tr -d ' \n')" >> "$GITHUB_ENV"
+
+      # Most of a fresh build is SDL3's set-up step. Keeping the build folder between runs skips it.
+      # A new Xcode on GitHub's Mac, or a change to CMakeLists.txt, starts a fresh folder.
+      - name: Reuse the last build folder
+        uses: actions/cache@v4
+        with:
+          path: build-ios
+          key: build-ios-${{ env.XCODE }}-${{ hashFiles('CMakeLists.txt') }}
 
       - name: Set up the Xcode project
         run: |
@@ -79,6 +89,8 @@ jobs:
 
       - name: Build the app without signing
         run: |
+          # A reused build folder still holds the last app. Remove it so old game files can't ride along.
+          find build-ios -type d -name "GameLab.app" -not -path "*/_deps/*" -prune -exec rm -rf {} +
           cmake --build build-ios --config Release --target gamelab -- \
             -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
