@@ -1,12 +1,32 @@
-name: Build IPA
+name: Build iPhone app
 
+# Builds the loader (every game, with Wi-Fi syncing) whenever native code changes.
+# Run it by hand with a game name to build that one game as a standalone app.
 on:
   push:
     branches: [main]
+    paths:
+      - "engine/**"
+      - "ios/**"
+      - "CMakeLists.txt"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
+    inputs:
+      game:
+        description: "Standalone build: the game's folder name (leave empty for the loader)"
+        default: ""
+      app_name:
+        description: "Standalone build: name under the icon"
+        default: ""
+      bundle_id:
+        description: "Standalone build: app identifier, e.g. com.yourname.runner"
+        default: ""
 
 permissions:
   contents: write
+
+env:
+  MOLTENVK_VERSION: v1.4.2
 
 jobs:
   build:
@@ -15,34 +35,67 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen
-        run: which xcodegen || brew install xcodegen
+      - name: Download MoltenVK (runs Vulkan on the iPhone's Metal)
+        run: |
+          base="https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK_VERSION"
+          curl -fL -o moltenvk.tar "$base/MoltenVK-ios.tar" || curl -fL -o moltenvk.tar "$base/MoltenVK-all.tar"
+          mkdir moltenvk && tar -xf moltenvk.tar -C moltenvk
+          lib=$(find "$PWD/moltenvk" -name libMoltenVK.a -path "*static*" -path "*/ios-arm64/*" | head -1)
+          if [ -z "$lib" ]; then lib=$(find "$PWD/moltenvk" -name libMoltenVK.a -path "*/ios-arm64/*" | head -1); fi
+          if [ -z "$lib" ]; then echo "libMoltenVK.a for iPhone not found. Files in the download:"; find moltenvk -maxdepth 6 | head -80; exit 1; fi
+          echo "MOLTENVK_LIB=$lib" >> "$GITHUB_ENV"
 
-      - name: Generate the Xcode project
-        run: xcodegen generate
+      - name: Work out what to build
+        run: |
+          echo "FINGERPRINT=$(python3 tools/dev.py fingerprint)" >> "$GITHUB_ENV"
+          game="${{ inputs.game }}"
+          if [ -n "$game" ]; then
+            if [ ! -f "games/$game/main.lua" ]; then echo "No game called '$game'"; exit 1; fi
+            name="${{ inputs.app_name }}"; bundle="${{ inputs.bundle_id }}"
+            echo "IPA=$game.ipa" >> "$GITHUB_ENV"
+            echo "TAG=$game-${{ github.run_number }}" >> "$GITHUB_ENV"
+            echo "EXTRA=-DSINGLE_GAME=$game -DAPP_BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+            echo "APP_NAME=${name:-$game}" >> "$GITHUB_ENV"
+            echo "BUNDLE_ID=${bundle:-com.starter.$(echo "$game" | tr -d '-')}" >> "$GITHUB_ENV"
+          else
+            echo "IPA=GameLab.ipa" >> "$GITHUB_ENV"
+            echo "TAG=loader-${{ github.run_number }}" >> "$GITHUB_ENV"
+            echo "EXTRA=-DAPP_BUILD_NUMBER=${{ github.run_number }}" >> "$GITHUB_ENV"
+            echo "APP_NAME=Game Lab" >> "$GITHUB_ENV"
+            echo "BUNDLE_ID=com.starter.gamelab" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set up the Xcode project
+        run: |
+          cmake -S . -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DMOLTENVK_LIB="$MOLTENVK_LIB" \
+            -DBUILD_FINGERPRINT="$FINGERPRINT" \
+            -DAPP_NAME="$APP_NAME" \
+            -DAPP_BUNDLE_ID="$BUNDLE_ID" \
+            $EXTRA
 
       - name: Build the app without signing
         run: |
-          xcodebuild \
-            -project MyApp.xcodeproj \
-            -scheme MyApp \
-            -sdk iphoneos \
-            -configuration Release \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+          cmake --build build-ios --config Release --target gamelab -- \
+            -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
       - name: Package the IPA
         run: |
-          mkdir Payload
-          cp -R build/Build/Products/Release-iphoneos/MyApp.app Payload/
-          zip -r MyApp.ipa Payload
+          app=$(find build-ios -type d -name "GameLab.app" -not -path "*/_deps/*" | head -1)
+          if [ -z "$app" ]; then echo "GameLab.app not found"; find build-ios -maxdepth 3 -name "*.app"; exit 1; fi
+          ls "$app" "$app/games"
+          mkdir Payload && cp -R "$app" Payload/
+          zip -qr "$IPA" Payload
 
       - name: Publish as a GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "build-${{ github.run_number }}" MyApp.ipa \
-            --title "Build ${{ github.run_number }}" \
-            --notes "Automatic build from commit ${{ github.sha }}"
+          latest="--latest"
+          if [ -n "${{ inputs.game }}" ]; then latest="--latest=false"; fi
+          gh release create "$TAG" "$IPA" $latest \
+            --title "$APP_NAME build ${{ github.run_number }} ($FINGERPRINT)" \
+            --notes "Built from commit ${{ github.sha }}. Native code fingerprint: $FINGERPRINT"

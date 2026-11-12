@@ -1,0 +1,6 @@
+build/
+build-ios/
+tools/.bin/
+tools/.state.json
+__pycache__/
+*.spv.tmp
