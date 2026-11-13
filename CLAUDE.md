@@ -27,16 +27,22 @@ This file briefs an assistant (or a future you) picking up this repo. It records
 ## Architecture
 
 ```
-engine/main.cpp     SDL3 app callbacks, game list, game lifecycle, hot reload, update buttons
-engine/gfx.cpp      Vulkan 1.2 renderer (the only renderer; MoltenVK runs it on Metal)
-engine/script.cpp   Lua 5.4 host and the gfx / input / save API given to games
-engine/input.cpp    touch sticks and buttons, with keyboard and mouse stand-ins
+engine/main.cpp     SDL3 app callbacks, game list, game lifecycle, hot reload, log file, HUD, update buttons
+engine/gfx.cpp      Vulkan 1.2 renderer (the only renderer; MoltenVK runs it on Metal): meshes, textures, fonts, lights, shadows, targets
+engine/model.cpp    glTF loading (cgltf), node lists, skeletons, animation sampling and blending, CPU skinning
+engine/collide.cpp  collision shapes, ray and sphere casts, overlaps, the character mover. No physics solver, by choice
+engine/audio.cpp    mixer on an SDL audio stream: clips, streamed .ogg (stb_vorbis), 3D, groups
+engine/script.cpp   Lua 5.4 host and the gfx / model / phys / audio / input / save / sys API given to games
+engine/input.cpp    touch sticks and buttons, raw touches, tilt, gamepad, with keyboard and mouse stand-ins
+engine/pool.h       numbered handles with a generation check; everything Lua holds is one of these
 engine/sync.cpp     loader only: finds the PC, downloads changed game files (POSIX sockets)
-engine/shaders/     mesh.slang, the standard shader, and its compiled .spv files
-games/<name>/       main.lua, optional shaders/*.slang, anything else the game needs
+engine/shaders/     common.slang (shared by every shader), mesh.slang, shadow.slang and their compiled .spv files
+games/<name>/       main.lua, lib.lua, optional game.cfg and shaders/*.slang, models, textures, sounds
+games/features/     a tour of every engine feature; its binary files come from tools/make_demo_assets.py
 ios/Info.plist.in   iPhone app settings
-tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor
-tools/template/     what `new <name>` copies
+ios/haptics.mm      the iPhone's tap motor (UIKit), the only Objective-C in the project
+tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor, check
+tools/template/     what `new <name>` copies: main.lua and lib.lua (the Lua-side helper library)
 .github/workflows/build.yml   iPhone build
 ```
 
@@ -48,7 +54,7 @@ Three builds come from the same sources:
 | Loader ("Game Lab") | `ship`, on push to `main` when native code changes | every game bundled, plus Wi-Fi sync (`LOADER_SYNC`) |
 | Standalone | `release <game>` (workflow_dispatch with `game=`) | one game (`SINGLE_GAME`), no game list, no sync |
 
-Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5.4.8` (built from `onelua.c`), Vulkan-Headers and volk `vulkan-sdk-1.4.363.0`. MoltenVK `v1.4.2` is downloaded by the workflow as a static library.
+Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5.4.8` (built from `onelua.c`), Vulkan-Headers and volk `vulkan-sdk-1.4.363.0`, stb (image, truetype, vorbis; pinned commit) and cgltf `v1.15`. MoltenVK `v1.4.2` is downloaded by the workflow as a static library.
 
 ### How the pieces talk
 
@@ -64,13 +70,19 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 
 ### Rendering details worth knowing
 
-- One vertex format everywhere: position, normal, colour (40 bytes). One descriptor set with a per-frame uniform block (`viewProj`, `ortho`, `lightDir`, `params`), and a 96-byte push constant block (`model`, `color`, `flags`). **Every shader must declare the same blocks as `engine/shaders/mesh.slang`.**
+- One vertex format everywhere: position, normal, colour, texture coordinate, tangent (64 bytes). Descriptor set 0 holds the per-frame uniform block and the shadow map; set 1 holds a material's four textures. The push constant block is 128 bytes (`model`, `color`, `flags`, two `params`). All of it is declared once in `engine/shaders/common.slang`, which **every shader includes**; `FrameData` and `PushData` in `gfx.cpp` must match it.
+- Drawing is recorded during `draw()` and replayed in `end_frame`: the shadow pass, then each texture target, then the screen (sky, solid things, see-through things sorted far to near, 2D). Pipelines are made on first use per shader and state combination.
+- Colours given by games are sRGB and are converted to linear on the CPU; textures and the swapchain are sRGB formats, so lighting is done in linear light.
+- The screen is 4x MSAA where available (`GAMELAB_NO_MSAA=1` turns it off on the PC). Texture targets and the 2048 shadow map are not multisampled.
+- Skinned meshes are moved on the CPU into the per-frame vertex buffer, so any shader works on characters. That is fine for a handful; crowds would need GPU skinning.
+- Triangles wind counter-clockwise seen from outside (as glTF does) and back faces are culled; `gfx.cull(false)` for two-sided things.
+- Files loaded from a game's folder are kept across a hot reload unless their modified time changed; everything is freed when the game changes.
 - Matrices are column-major in C++ and shaders are compiled with `-matrix-layout-column-major`, so Slang code writes `mul(matrix, vector)`.
 - Slang emits **SPIR-V 1.5**, which is why the instance asks for **Vulkan 1.2**.
 - Shaders are compiled to `<name>.vert.spv` and `<name>.frag.spv` (entry points `vsMain`, `fsMain`). The `.spv` files are **committed**, so the GitHub build needs no shader compiler. MoltenVK turns SPIR-V into Metal Shading Language at run time.
-- 2D drawing uses a virtual screen whose **shorter side is 720 units**. Text is a built-in 8x8 bitmap font drawn as rectangles, so no textures are needed yet.
+- 2D drawing uses a virtual screen whose **shorter side is 720 units**. Text uses a built-in 8x8 bitmap font drawn as rectangles, or a `.ttf` chosen with `gfx.font`, whose letters are drawn into a 1024 atlas the first time each is used (so any language the font covers works).
 - Desktop loads Vulkan through **volk**. The iPhone build links MoltenVK statically and must **not** use volk, because volk's function-pointer names collide with MoltenVK's real functions. `gfx.cpp` switches on `USE_VOLK`.
-- Simplifications to revisit: back-face culling is off, one frame in flight, no MSAA, built-in meshes only (cube, sphere, plane), swapchain rebuilt whenever the window's pixel size changes.
+- Simplifications to revisit (each is marked `ponytail:` in the code): one frame in flight; frees wait for the GPU; one draw call per mesh (no instancing); textures are uncompressed RGBA with CPU-made mipmaps (no ASTC); assets load on the main thread (`lib.loader` spreads them over frames); capsules collide as a column of spheres and never tilt; sphere casts step along the line rather than solving exactly; the swapchain is rebuilt whenever the window's pixel size changes.
 
 ### Small traps already hit
 
@@ -87,7 +99,8 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | Engine on Linux with a software Vulkan driver: both demo games, custom shader, controls, game list, portrait and landscape | Tested |
 | Loader sync against `dev.py` on Linux: discovery, download, live edits, remote `play`, Lua errors sent to the PC, update notice | Tested |
 | **iPhone build of the first version**: compiled on GitHub first try, ran on the phone, rendered through MoltenVK, touch worked, found the PC by itself | Tested on device |
-| Windows PC build (`run <game>`) | Tested: builds with MSVC and runs both games |
+| Windows PC build (`run <game>`) | Tested: builds with MSVC and runs every game |
+| The big engine build of November 2026 (textures, glTF, skinning, lights, shadows, targets, fonts, collision, audio, raw touches) | Tested on the PC with Vulkan validation clean, by screenshots and by a Lua self-test of collision, animation and audio numbers. **Untested on the phone** when this was written: the first iPhone build, MoltenVK's handling of the new passes, sound output, tilt, haptics (`ios/haptics.mm` has never been compiled on the PC), gamepad, the log file, `lua` from `dev.py`, `game.cfg` orientation |
 | Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa` served to the phone | Tested |
 | Updating the app on the phone | Game Lab is installed **inside LiveContainer**. `sidestore://install` failed (bundle mismatch) and `livecontainer://install` failed ("LiveContainer must refresh to install apps": it won't install while an app runs inside it). The working route, **tested**: DOWNLOAD UPDATE (Safari saves the IPA), then **+** in LiveContainer. Don't retry in-app install links |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
@@ -99,6 +112,9 @@ When something from the untested rows fails, that is expected; fix it rather tha
 ## Debugging aids
 
 - `python tools/dev.py status` and `doctor`.
+- **F3** (or `sys.hud(true)`) shows frame time, draw calls, vertices, textures, meshes, Lua memory and sounds playing. `phys.debug()` draws collision shapes.
+- `lua <code>` at the `dev.py` prompt runs Lua in the game on the phone (loader only; it travels as a command, like `play`).
+- The app writes `log.txt` in its preferences folder and a `running` marker; if the marker is still there at the next start, the old log's tail is sent to `dev.py` as an error.
 - Phone-side `print()` output and Lua errors appear in the `dev.py` window. Errors also show on the phone's screen.
 - `GAMELAB_WINDOW=414x896` opens the PC build in a phone shape.
 - **F1** in the PC window steps through iPhone frames (11 to 17 Pro Max): the window takes the phone's shape and its rounded corners, notch or Dynamic Island and home bar are drawn on top. The phone's black body is drawn round the screen too (`gfx::set_bezel`), so the window has the whole phone's proportions. **F2** turns it. `GAMELAB_DEVICE=9` starts with the ninth. PC only (`draw_phone_frame` in `main.cpp`); sizes are approximate. Games and the game list keep clear with `gfx.safe()` (left, top, right, bottom insets in 2D units): real values from `SDL_GetWindowSafeArea` on the phone (**untested on device**), simulated from the frame on the PC, zero with no frame.
@@ -131,9 +147,9 @@ Toward a shippable game within the month:
 1. **Confirm the Windows build** with `run runner` and fix any MSVC errors.
 2. **Confirm the private update flow** end to end on the phone; adjust the install link if SideStore inside LiveContainer doesn't accept it.
 3. **Speed up iPhone builds:** cache `build-ios/_deps` with `actions/cache`, or try the Ninja generator for iOS.
-4. **Textures and model loading:** samplers and a texture path through the shader interface, then glTF via `cgltf` and images via `stb_image`. This is the biggest missing piece for a real 3D game.
-5. **Audio:** SDL3 audio is available; add a small mixer or SDL_mixer and a Lua `audio` table.
-6. **Collision and physics:** start with simple shapes in C++ exposed to Lua, or integrate Jolt if the game needs it.
-7. **Phone polish:** safe-area insets so UI avoids the notch and home bar, per-game orientation lock, game controller support, scrolling on the game list, turn back-face culling on.
+4. **Done in the November 2026 engine build:** textures, glTF models and skinned animation, audio, collision, lights and shadows, fonts, raw touches, tilt, haptics, gamepad, orientation lock, culling. The user chose to write any physics simulation themselves in Lua on top of the collision queries, so **do not add Jolt or another physics library**. The aim of that build was that games need no further C++ for a long time; check `README.md` and `games/features/` before adding to the engine.
+5. **Get that build onto the phone and fix what MoltenVK or iOS reject** (see the untested row above).
+6. **Make the game.** Blender for levels and characters (export `.glb`), Lua for everything else.
+7. **Phone polish left over:** scrolling on the game list.
 8. **App Store path:** join the Apple Developer Program early (about $99 a year, enrolment can take days). Then add app icons and a launch screen, real bundle IDs, a signing and upload workflow using an App Store Connect API key, and the store listing (screenshots, privacy answers, age rating). A paid account also removes the 3-app and 7-day sideload limits.
 9. Consider making the repo private before release: `gh repo edit --visibility private --accept-visibility-change-consequences`. Private repos have a monthly Actions allowance and macOS minutes count heavily against it, so check GitHub's billing page first.

@@ -44,7 +44,8 @@ IPA_DIR = TOOLS / ".ipa"   # app builds fetched from GitHub, served to the phone
 
 NATIVE_DIRS = ["engine", "ios"]
 NATIVE_FILES = ["CMakeLists.txt"]
-BINARY_SUFFIXES = {".spv", ".png", ".jpg", ".bin"}
+BINARY_SUFFIXES = {".spv", ".png", ".jpg", ".jpeg", ".bin", ".glb", ".ogg", ".wav", ".ttf", ".otf"}
+SHARED_SHADER = REPO / "engine" / "shaders" / "common.slang"   # included by every shader, not a shader itself
 SHADER_STAGES = [("vertex", "vsMain", "vert"), ("fragment", "fsMain", "frag")]
 
 
@@ -151,13 +152,14 @@ def slangc_or_explain():
 def shader_sources():
     sources = list((REPO / "engine" / "shaders").glob("*.slang"))
     sources += list(GAMES.glob("*/shaders/*.slang"))
-    return sorted(sources)
+    return sorted(s for s in sources if s != SHARED_SHADER)
 
 
 def compile_shader(source, force=False):
     """Compiles one .slang file to <name>.vert.spv and <name>.frag.spv beside it. Returns True if all is well."""
     outputs = [source.with_name(f"{source.stem}.{suffix}.spv") for _, _, suffix in SHADER_STAGES]
-    if not force and all(o.is_file() and o.stat().st_mtime >= source.stat().st_mtime for o in outputs):
+    newest = max(source.stat().st_mtime, SHARED_SHADER.stat().st_mtime if SHARED_SHADER.is_file() else 0)
+    if not force and all(o.is_file() and o.stat().st_mtime >= newest for o in outputs):
         return True
     slangc = slangc_or_explain()
     if not slangc:
@@ -166,7 +168,7 @@ def compile_shader(source, force=False):
     for (stage, entry, _), output in zip(SHADER_STAGES, outputs):
         temp = output.with_suffix(".spv.tmp")
         result = subprocess.run(
-            [slangc, str(source), "-target", "spirv", "-matrix-layout-column-major",
+            [slangc, str(source), "-target", "spirv", "-matrix-layout-column-major", "-I", str(SHARED_SHADER.parent),
              "-entry", entry, "-stage", stage, "-o", str(temp)],
             capture_output=True, text=True)
         if result.returncode != 0 or not temp.is_file():
@@ -411,7 +413,12 @@ def describe_changes(before, after, known_games):
     native_changed, live_changed = [], []
     for path in sorted(set(changed)):
         rel = path.relative_to(REPO).as_posix()
-        if path.suffix == ".slang":
+        if path == SHARED_SHADER:
+            # Every shader includes this file, so all of them are rebuilt.
+            for source in shader_sources():
+                compile_shader(source, force=True)
+            native_changed.append(rel)
+        elif path.suffix == ".slang":
             compiled = path.is_file() and compile_shader(path, force=True)
             if rel.startswith("engine/"):
                 native_changed.append(rel)
@@ -682,6 +689,7 @@ HELP = """Commands:
   play <game>    open a game on the phone          menu     back to the phone's game list
   reload         restart the game on the phone     list     show all games
   status         what is out of date               ship [message]   build a new app for the phone
+  lua <code>     run a line of Lua in the game on the phone, e.g.  lua player.speed = 9   or   lua sys.time_scale(0.2)
   quit"""
 
 
@@ -708,6 +716,9 @@ def console():
             send_command("menu")
         elif word == "reload":
             send_command("reload")
+        elif word == "lua" and rest:
+            send_command("lua", rest)
+            say("Sent. What it prints comes back here." + ("" if phone_connected() else " (No phone is connected yet.)"))
         elif word == "list":
             say("\n".join(game_names()) or "No games yet. Type: new mygame")
         elif word == "run":

@@ -31,7 +31,10 @@ FetchContent_MakeAvailable(SDL3)
 FetchContent_Declare(lua GIT_REPOSITORY https://github.com/lua/lua.git GIT_TAG v5.4.8 GIT_SHALLOW TRUE SOURCE_SUBDIR _none)
 FetchContent_Declare(vulkan_headers GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git GIT_TAG vulkan-sdk-1.4.363.0 GIT_SHALLOW TRUE SOURCE_SUBDIR _none)
 FetchContent_Declare(volk GIT_REPOSITORY https://github.com/zeux/volk.git GIT_TAG vulkan-sdk-1.4.363.0 GIT_SHALLOW TRUE SOURCE_SUBDIR _none)
-FetchContent_MakeAvailable(lua vulkan_headers volk)
+# stb reads PNG, JPG, TTF and OGG files. cgltf reads glTF models. Both are plain source files.
+FetchContent_Declare(stb URL https://github.com/nothings/stb/archive/9600522de53973336fa033a289858a4354cbb04c.zip SOURCE_SUBDIR _none)
+FetchContent_Declare(cgltf GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git GIT_TAG v1.15 GIT_SHALLOW TRUE SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(lua vulkan_headers volk stb cgltf)
 
 add_library(lua STATIC ${lua_SOURCE_DIR}/onelua.c)
 target_compile_definitions(lua PRIVATE MAKE_LIB)
@@ -41,7 +44,27 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 # ---- the app ----
-set(ENGINE_SOURCES engine/main.cpp engine/gfx.cpp engine/input.cpp engine/script.cpp)
+set(ENGINE_SOURCES engine/main.cpp engine/gfx.cpp engine/input.cpp engine/script.cpp
+    engine/model.cpp engine/collide.cpp engine/audio.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  enable_language(OBJCXX)
+  list(APPEND ENGINE_SOURCES ios/haptics.mm)   # the phone's tap-feedback motor
+  set_source_files_properties(ios/haptics.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+endif()
+
+# A standalone game may only be held one way up. Its game.cfg says so with a line like: orientation = landscape
+set(IOS_ORIENTATIONS "        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+        <string>UIInterfaceOrientationPortrait</string>")
+if(SINGLE_GAME AND EXISTS ${CMAKE_SOURCE_DIR}/games/${SINGLE_GAME}/game.cfg)
+  file(STRINGS ${CMAKE_SOURCE_DIR}/games/${SINGLE_GAME}/game.cfg GAME_ORIENTATION REGEX "^orientation[ 	]*=")
+  if(GAME_ORIENTATION MATCHES "landscape")
+    set(IOS_ORIENTATIONS "        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>")
+  elseif(GAME_ORIENTATION MATCHES "portrait")
+    set(IOS_ORIENTATIONS "        <string>UIInterfaceOrientationPortrait</string>")
+  endif()
+endif()
 
 # Wi-Fi syncing belongs to the loader only. Release builds of a single game never contain it.
 set(WITH_SYNC OFF)
@@ -56,7 +79,8 @@ else()
   add_executable(gamelab ${ENGINE_SOURCES})
 endif()
 
-target_include_directories(gamelab PRIVATE engine ${vulkan_headers_SOURCE_DIR}/include)
+target_include_directories(gamelab PRIVATE engine ${vulkan_headers_SOURCE_DIR}/include ${stb_SOURCE_DIR} ${cgltf_SOURCE_DIR})
+target_compile_definitions(gamelab PRIVATE STB_VORBIS_NO_STDIO STB_VORBIS_NO_PUSHDATA_API)
 target_link_libraries(gamelab PRIVATE SDL3::SDL3-static lua)
 target_compile_definitions(gamelab PRIVATE BUILD_FINGERPRINT="${BUILD_FINGERPRINT}")
 if(WITH_SYNC)

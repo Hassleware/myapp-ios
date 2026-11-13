@@ -15,8 +15,10 @@
 #include <string>
 #include <vector>
 
+#include "audio.h"
 #include "gfx.h"
 #include "input.h"
+#include "model.h"
 #include "script.h"
 
 #if defined(LOADER_SYNC)
@@ -39,7 +41,13 @@ std::string fatal;         // a start-up problem to show instead of anything els
 bool paused = false;
 Uint64 lastTicks = 0, lastWatch = 0, lastListRefresh = 0;
 Uint64 watchStamp = 0;
-float gameTime = 0;
+bool showHud = false;
+float smoothedDt = 1.0f / 60.0f;
+std::string loadedDir;     // the folder whose files the renderer and mixer are holding
+std::string orientation;   // the running game's game.cfg choice: "landscape", "portrait" or "" for either
+std::string logPath, runningMark, lastCrash;
+SDL_IOStream* logFile = nullptr;
+SDL_LogOutputFunction defaultLog = nullptr;
 
 bool exists(const std::string& path) { return SDL_GetPathInfo(path.c_str(), nullptr); }
 
@@ -91,20 +99,84 @@ void on_log(const char* level, const std::string& message) {
 #endif
 }
 
+// Everything the engine logs also goes to a file, so a phone that was away from the PC can still say what happened.
+void SDLCALL log_to_file(void* userdata, int category, SDL_LogPriority priority, const char* message) {
+    if (defaultLog) defaultLog(userdata, category, priority, message);
+    if (logFile) {
+        SDL_WriteIO(logFile, message, SDL_strlen(message));
+        SDL_WriteIO(logFile, "\n", 1);
+        SDL_FlushIO(logFile);
+    }
+}
+
+// A game's optional game.cfg: lines of  key = value.
+std::string config_value(const std::string& dir, const std::string& key) {
+    size_t size = 0;
+    char* data = (char*)SDL_LoadFile((dir + "/game.cfg").c_str(), &size);
+    if (!data) return "";
+    std::string text(data, size), found;
+    SDL_free(data);
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        start = end + 1;
+        size_t equals = line.find('=');
+        if (equals == std::string::npos || line[0] == '#') continue;
+        auto trim = [](std::string s) {
+            size_t a = s.find_first_not_of(" \t\r"), b = s.find_last_not_of(" \t\r");
+            return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+        };
+        if (trim(line.substr(0, equals)) == key) found = trim(line.substr(equals + 1));
+    }
+    return found;
+}
+
+// Which ways up the phone may be held. iOS asks again each time the phone is turned.
+void apply_orientation(const std::string& wanted) {
+    orientation = wanted == "landscape" || wanted == "portrait" ? wanted : "";
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, orientation == "landscape" ? "LandscapeLeft LandscapeRight"
+                                     : orientation == "portrait" ? "Portrait" : "LandscapeLeft LandscapeRight Portrait");
+}
+
+// Lets go of the last game's files. On a reload of the same game, files that have not changed are kept.
+void release_assets(const std::string& nextDir) {
+    bool everything = nextDir != loadedDir;
+    script::unload();
+    model::release(everything);
+    audio::release(everything);
+    gfx::set_game_dir(nextDir);
+    loadedDir = nextDir;
+}
+
 void start_game(const std::string& name) {
     current = name;
-    gameTime = 0;
     std::string dir = game_dir(name);
-    gfx::set_game_dir(dir);
+    release_assets(dir);
+    apply_orientation(config_value(dir, "orientation"));
     script::load(dir, savesDir + "/" + name + ".txt");
     watchStamp = folder_stamp(dir);
 }
 
 void show_list() {
-    script::unload();
-    gfx::set_game_dir("");
+    release_assets("");
+    apply_orientation("");
     current.clear();
     refresh_games();
+}
+
+// Frame time, drawing load and memory, in a corner. F3 on the PC, sys.hud(true) from a game.
+void draw_hud() {
+    gfx::Stats s = gfx::stats();
+    char line[160];
+    SDL_snprintf(line, sizeof(line), "%3.0f FPS %4.1f MS\n%d DRAWS %dK VERTS\n%d TEX %d MESH\nLUA %d KB  %d SOUNDS", 1.0f / smoothedDt, smoothedDt * 1000.0f,
+                 s.draws, s.vertices / 1000, s.textures, s.meshes, script::memory_kb(), audio::voices());
+    const float back[4] = {0, 0, 0, 0.55f}, ink[4] = {0.6f, 1.0f, 0.7f, 1};
+    const float* safe = gfx::safe_area();
+    float x = gfx::view_width() - safe[2] - 300, y = safe[1] + 12;
+    gfx::rect(x - 8, y - 8, 296, 76, back);
+    gfx::text(line, x, y, 12, ink);
 }
 
 // Breaks long text into lines that fit the screen, since errors can be long.
@@ -382,8 +454,12 @@ void check_tick() {
         if (checkFrames < 12) return;
         check_frame();
     }
-    if (++checkStep == phoneCount * 2) {
-        printf("\nLayout check for '%s': %d iPhones, sideways and upright.\n", current.c_str(), phoneCount);
+    // A game that only ever runs one way up is only checked that way up.
+    ++checkStep;
+    while (checkStep < phoneCount * 2 && ((checkStep % 2 == 0 && orientation == "portrait") || (checkStep % 2 == 1 && orientation == "landscape"))) ++checkStep;
+    if (checkStep >= phoneCount * 2) {
+        printf("\nLayout check for '%s': %d iPhones, %s.\n", current.c_str(), phoneCount,
+               orientation == "portrait" ? "upright" : orientation == "landscape" ? "sideways" : "sideways and upright");
         if (checkFound.empty()) printf("Nothing is covered on any of them.\n");
         std::string way;
         for (const auto& found : checkFound) {
@@ -450,6 +526,7 @@ void frame() {
     Uint64 now = SDL_GetTicks();
     float dt = SDL_min((now - lastTicks) / 1000.0f, 0.05f);
     lastTicks = now;
+    smoothedDt += (dt - smoothedDt) * 0.1f;
 
 #if defined(LOADER_SYNC)
     devsync::Command command;
@@ -458,6 +535,11 @@ void frame() {
         if (command.action == "play" && std::find(games.begin(), games.end(), command.game) != games.end()) start_game(command.game);
         else if (command.action == "menu" && !current.empty()) show_list();
         else if (command.action == "reload" && !current.empty()) start_game(current);
+        else if (command.action == "lua") script::eval(command.game);
+    }
+    if (!lastCrash.empty()) {
+        devsync::log("error", "", lastCrash);   // held until the PC is found
+        lastCrash.clear();
     }
     bool syncing = devsync::busy();
 #else
@@ -475,10 +557,7 @@ void frame() {
         refresh_games();
     }
 
-    if (!current.empty() && fatal.empty()) {
-        gameTime += dt;
-        script::update(dt);
-    }
+    if (!current.empty() && fatal.empty()) script::update(dt);
 
     if (!gfx::begin_frame()) {
         input::end_frame();
@@ -494,7 +573,11 @@ void frame() {
         gfx::ui_log(checking);
 #endif
         script::draw();
+        // The engine's own drawing must not inherit a shader, texture or target the game left set.
+        gfx::target(0);
+        gfx::reset_state();
         input::draw();
+        if (showHud || script::hud_wanted()) draw_hud();
 #if !defined(SINGLE_GAME)
         // A small button to get back to the game list, tucked into the screen's top-left corner. It sits on the
         // diagonal out of the corner, the same distance from the curve all the way round. iOS doesn't say how round
@@ -518,14 +601,14 @@ void frame() {
         }
         if (leave) {
             draw_phone_frame();
-            gfx::end_frame(gameTime);
+            gfx::end_frame(script::game_time());
             input::end_frame();
             show_list();
             return;
         }
     }
     draw_phone_frame();
-    gfx::end_frame(gameTime);
+    gfx::end_frame(script::game_time());
     input::end_frame();
 
 #if defined(GFX_SCREENSHOT)
@@ -586,6 +669,26 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
     savesDir = prefDir + "saves";
     SDL_CreateDirectory(savesDir.c_str());
 
+    // The log of this run. If the last run never said goodbye, keep its final lines to show the PC.
+    logPath = prefDir + "log.txt";
+    runningMark = prefDir + "running";
+    if (SDL_GetPathInfo(runningMark.c_str(), nullptr)) {
+        size_t size = 0;
+        char* old = (char*)SDL_LoadFile(logPath.c_str(), &size);
+        if (old) {
+            std::string tail(old + (size > 1500 ? size - 1500 : 0), size > 1500 ? 1500 : size);
+            for (char& c : tail)
+                if (c == '\n' || c == '\t' || c == '\r') c = ' ';
+            lastCrash = "The app stopped unexpectedly last time. Its log ended: " + tail;
+        }
+        SDL_free(old);
+    }
+    logFile = SDL_IOFromFile(logPath.c_str(), "w");
+    defaultLog = SDL_GetDefaultLogOutputFunction();
+    SDL_SetLogOutputFunction(log_to_file, nullptr);
+    SDL_SaveFile(runningMark.c_str(), "1", 1);
+    if (!lastCrash.empty()) SDL_Log("%s", lastCrash.c_str());
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
 #if !defined(SDL_PLATFORM_IOS)
@@ -616,6 +719,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Game Lab can't start", fatal.c_str(), window);
         return SDL_APP_FAILURE;
     }
+    audio::init();   // a game still runs, silently, if this fails
+    input::init();
 
 #if defined(LOADER_SYNC)
     if (!syncedDir.empty()) {
@@ -645,10 +750,22 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     (void)appstate;
     switch (event->type) {
     case SDL_EVENT_QUIT: return SDL_APP_SUCCESS;
-    case SDL_EVENT_DID_ENTER_BACKGROUND: paused = true; break;
+    case SDL_EVENT_DID_ENTER_BACKGROUND:
+        if (!paused) {
+            paused = true;
+            script::pause();
+            audio::suspend(true);
+            SDL_RemovePath(runningMark.c_str());   // being closed from here on is not a crash
+        }
+        break;
     case SDL_EVENT_WILL_ENTER_FOREGROUND:
     case SDL_EVENT_DID_ENTER_FOREGROUND:
-        paused = false;
+        if (paused) {
+            paused = false;
+            audio::suspend(false);
+            script::resume();
+            SDL_SaveFile(runningMark.c_str(), "1", 1);
+        }
         lastTicks = SDL_GetTicks();
         break;
     case SDL_EVENT_KEY_DOWN:
@@ -661,6 +778,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
 #endif
         if (event->key.key == SDLK_F5 && !current.empty()) start_game(current);
+        if (event->key.key == SDLK_F3) showHud = !showHud;
 #if !defined(SDL_PLATFORM_IOS)
         if (event->key.key == SDLK_F1) {
             if (++phoneIndex >= phoneCount) phoneIndex = -1;
@@ -695,5 +813,10 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result) {
     devsync::stop();
 #endif
     script::unload();
+    model::release(true);
+    audio::shutdown();
     gfx::shutdown();
+    SDL_RemovePath(runningMark.c_str());
+    SDL_SetLogOutputFunction(defaultLog, nullptr);
+    if (logFile) SDL_CloseIO(logFile);
 }

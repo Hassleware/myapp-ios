@@ -6,6 +6,10 @@
 
 #include "gfx.h"
 
+#if defined(SDL_PLATFORM_IOS)
+extern "C" void gamelab_haptic(int kind);   // ios/haptics.mm
+#endif
+
 namespace input {
 namespace {
 
@@ -18,6 +22,23 @@ struct State {
 
 const Uint64 MOUSE_POINTER = ~(Uint64)0;
 std::vector<State> states;
+std::vector<Touch> touchList;
+SDL_Sensor *accelSensor = nullptr, *gyroSensor = nullptr;
+SDL_Gamepad* gamepad = nullptr;
+
+Touch* touch_for(Uint64 pointer) {
+    for (Touch& t : touchList)
+        if (t.id == pointer && t.phase != 2) return &t;
+    return nullptr;
+}
+
+float pad_axis(SDL_GamepadAxis axis) {
+    if (!gamepad) return 0;
+    float v = SDL_GetGamepadAxis(gamepad, axis) / 32767.0f;
+    const float dead = 0.15f;   // worn sticks never rest at exactly zero
+    if (fabsf(v) < dead) return 0;
+    return SDL_clamp((v - (v < 0 ? -dead : dead)) / (1.0f - dead), -1.0f, 1.0f);
+}
 bool tapped = false;
 float tapX = 0, tapY = 0;
 
@@ -36,6 +57,11 @@ void move_stick(State& s, float px, float py) {
 
 void pointer_down(Uint64 pointer, float nx, float ny) {
     float px = nx * screen_w(), py = ny * screen_h();
+    Touch touch;
+    touch.id = pointer == MOUSE_POINTER ? 0 : pointer;
+    touch.x = px;
+    touch.y = py;
+    touchList.push_back(touch);
     for (State& s : states) {
         if (s.held) continue;
         float dx = px - s.def.x * screen_w(), dy = py - s.def.y * screen_h();
@@ -44,6 +70,7 @@ void pointer_down(Uint64 pointer, float nx, float ny) {
         s.held = true;
         s.pointer = pointer;
         if (s.def.isStick) move_stick(s, px, py); else s.wasPressed = true;
+        touchList.back().claimed = true;
         return;
     }
     tapped = true;
@@ -52,11 +79,19 @@ void pointer_down(Uint64 pointer, float nx, float ny) {
 }
 
 void pointer_move(Uint64 pointer, float nx, float ny) {
+    if (Touch* t = touch_for(pointer == MOUSE_POINTER ? 0 : pointer)) {
+        float px = nx * screen_w(), py = ny * screen_h();
+        t->dx += px - t->x;
+        t->dy += py - t->y;
+        t->x = px;
+        t->y = py;
+    }
     for (State& s : states)
         if (s.held && s.pointer == pointer && s.def.isStick) move_stick(s, nx * screen_w(), ny * screen_h());
 }
 
 void pointer_up(Uint64 pointer) {
+    if (Touch* t = touch_for(pointer == MOUSE_POINTER ? 0 : pointer)) t->phase = 2;
     for (State& s : states)
         if (s.held && s.pointer == pointer) {
             s.held = false;
@@ -79,6 +114,18 @@ State* find(const std::string& id) {
 }
 
 }  // namespace
+
+void init() {
+    if (!SDL_InitSubSystem(SDL_INIT_SENSOR | SDL_INIT_GAMEPAD)) return;
+    int count = 0;
+    SDL_SensorID* ids = SDL_GetSensors(&count);
+    for (int i = 0; ids && i < count; i++) {
+        SDL_SensorType type = SDL_GetSensorTypeForID(ids[i]);
+        if (type == SDL_SENSOR_ACCEL && !accelSensor) accelSensor = SDL_OpenSensor(ids[i]);
+        if (type == SDL_SENSOR_GYRO && !gyroSensor) gyroSensor = SDL_OpenSensor(ids[i]);
+    }
+    SDL_free(ids);
+}
 
 void set_controls(const std::vector<Control>& controls) {
     states.clear();
@@ -105,6 +152,15 @@ void handle_event(const SDL_Event& event) {
         pointer_move(MOUSE_POINTER, nx, ny);
         break;
     case SDL_EVENT_MOUSE_BUTTON_UP: pointer_up(MOUSE_POINTER); break;
+    case SDL_EVENT_GAMEPAD_ADDED:
+        if (!gamepad) gamepad = SDL_OpenGamepad(event.gdevice.which);
+        break;
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        if (gamepad && SDL_GetGamepadID(gamepad) == event.gdevice.which) {
+            SDL_CloseGamepad(gamepad);
+            gamepad = nullptr;
+        }
+        break;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
         if (event.key.repeat) break;
@@ -122,6 +178,16 @@ void handle_event(const SDL_Event& event) {
 void end_frame() {
     for (State& s : states) s.wasPressed = false;
     tapped = false;
+    for (size_t i = 0; i < touchList.size();) {
+        Touch& t = touchList[i];
+        if (t.phase == 2) {
+            touchList.erase(touchList.begin() + (long)i);
+            continue;
+        }
+        t.phase = 1;
+        t.dx = t.dy = 0;
+        i++;
+    }
 }
 
 void draw() {
@@ -152,6 +218,8 @@ void stick(const std::string& id, float& x, float& y) {
         if (keys[SDL_SCANCODE_D] || keys[SDL_SCANCODE_RIGHT]) x += 1;
         if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) y -= 1;
         if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]) y += 1;
+        x += pad_axis(SDL_GAMEPAD_AXIS_LEFTX);
+        y += pad_axis(SDL_GAMEPAD_AXIS_LEFTY);
     }
     x = SDL_clamp(x, -1.0f, 1.0f);
     y = SDL_clamp(y, -1.0f, 1.0f);
@@ -171,6 +239,47 @@ bool tap(float& x, float& y) {
     x = tapX;
     y = tapY;
     return tapped;
+}
+
+const std::vector<Touch>& touches() { return touchList; }
+
+bool key(const std::string& name) {
+    SDL_Scancode code = SDL_GetScancodeFromName(name.c_str());
+    int count = 0;
+    const bool* keys = SDL_GetKeyboardState(&count);
+    return code != SDL_SCANCODE_UNKNOWN && (int)code < count && keys[code];
+}
+
+void tilt(float out[3]) {
+    out[0] = out[1] = out[2] = 0;
+    if (accelSensor && SDL_GetSensorData(accelSensor, out, 3))
+        for (int i = 0; i < 3; i++) out[i] /= SDL_STANDARD_GRAVITY;
+}
+
+void gyro(float out[3]) {
+    out[0] = out[1] = out[2] = 0;
+    if (gyroSensor) SDL_GetSensorData(gyroSensor, out, 3);
+}
+
+float pad(const std::string& name) {
+    if (!gamepad) return 0;
+    SDL_GamepadAxis axis = SDL_GetGamepadAxisFromString(name.c_str());
+    if (axis != SDL_GAMEPAD_AXIS_INVALID) return pad_axis(axis);
+    SDL_GamepadButton button = SDL_GetGamepadButtonFromString(name.c_str());
+    return button != SDL_GAMEPAD_BUTTON_INVALID && SDL_GetGamepadButton(gamepad, button) ? 1.0f : 0.0f;
+}
+
+void haptic(const std::string& kind) {
+    const char* names[] = {"light", "medium", "heavy", "success", "warning", "error"};
+    int which = 1;
+    for (int i = 0; i < 6; i++)
+        if (kind == names[i]) which = i;
+#if defined(SDL_PLATFORM_IOS)
+    gamelab_haptic(which);
+#else
+    // No tap motor on a PC. A game controller's rumble stands in for it.
+    if (gamepad) SDL_RumbleGamepad(gamepad, 0x4000, (Uint16)(0x3000 + which * 0x1800), 60);
+#endif
 }
 
 }  // namespace input
