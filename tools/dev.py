@@ -74,7 +74,8 @@ def native_files():
     files = [REPO / name for name in NATIVE_FILES]
     for folder in NATIVE_DIRS:
         files += [p for p in (REPO / folder).rglob("*") if p.is_file() and p.suffix != ".slang"]
-    return sorted(p for p in files if p.is_file())
+    # Sorted by plain text, so Windows (which ignores case in paths) and GitHub's Mac agree on the order.
+    return sorted((p for p in files if p.is_file()), key=lambda p: p.relative_to(REPO).as_posix())
 
 
 def fingerprint():
