@@ -25,6 +25,15 @@ std::vector<State> states;
 std::vector<Touch> touchList;
 SDL_Sensor *accelSensor = nullptr, *gyroSensor = nullptr;
 SDL_Gamepad* gamepad = nullptr;
+std::vector<std::pair<std::string, bool>> typed;   // text, isKey
+
+SDL_Window* main_window() {
+    int count = 0;
+    SDL_Window** all = SDL_GetWindows(&count);
+    SDL_Window* window = all && count > 0 ? all[0] : nullptr;
+    SDL_free(all);
+    return window;
+}
 
 Touch* touch_for(Uint64 pointer) {
     for (Touch& t : touchList)
@@ -161,8 +170,17 @@ void handle_event(const SDL_Event& event) {
             gamepad = nullptr;
         }
         break;
+    case SDL_EVENT_TEXT_INPUT:
+        if (typed.size() < 256) typed.push_back({event.text.text, false});
+        break;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
+        if (event.type == SDL_EVENT_KEY_DOWN && keyboard_shown() && typed.size() < 256) {
+            if (event.key.key == SDLK_BACKSPACE) typed.push_back({"backspace", true});
+            if (event.key.key == SDLK_RETURN || event.key.key == SDLK_KP_ENTER) typed.push_back({"return", true});
+            // Ctrl+V on the PC. On the phone a game offers its own PASTE button and calls input.paste().
+            if (event.key.key == SDLK_V && (event.key.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI))) typed.push_back({clipboard(), false});
+        }
         if (event.key.repeat) break;
         for (State& s : states) {
             if (s.def.isStick || s.def.key.empty()) continue;
@@ -174,6 +192,52 @@ void handle_event(const SDL_Event& event) {
     default: break;
     }
 }
+
+void keyboard(bool show, const std::string& kind) {
+    SDL_Window* window = main_window();
+    if (!window) return;
+    if (!show) {
+        SDL_StopTextInput(window);
+        typed.clear();
+        return;
+    }
+    SDL_TextInputType type = kind == "email" ? SDL_TEXTINPUT_TYPE_TEXT_EMAIL
+                           : kind == "number" ? SDL_TEXTINPUT_TYPE_NUMBER
+                           : kind == "password" ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN
+                           : kind == "code" ? SDL_TEXTINPUT_TYPE_NUMBER_PASSWORD_VISIBLE   // SDL marks this one as a one-time code for iOS
+                                            : SDL_TEXTINPUT_TYPE_TEXT;
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, type);
+    // Passwords, codes and email addresses are not offered to autocorrect, so the keyboard does not learn them.
+    SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, kind == "text");
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, kind == "text" ? SDL_CAPITALIZE_SENTENCES : SDL_CAPITALIZE_NONE);
+    SDL_StopTextInput(window);   // so a change of kind takes effect
+    SDL_StartTextInputWithProperties(window, props);
+    SDL_DestroyProperties(props);
+}
+
+bool keyboard_shown() {
+    SDL_Window* window = main_window();
+    return window && SDL_TextInputActive(window);
+}
+
+bool take_typed(std::string& text, bool& isKey) {
+    if (typed.empty()) return false;
+    text = typed.front().first;
+    isKey = typed.front().second;
+    typed.erase(typed.begin());
+    return true;
+}
+
+std::string clipboard() {
+    char* text = SDL_GetClipboardText();
+    std::string copy = text ? text : "";
+    SDL_free(text);
+    if (copy.size() > 4096) copy.resize(4096);
+    return copy;
+}
+
+void set_clipboard(const std::string& text) { SDL_SetClipboardText(text.c_str()); }
 
 void end_frame() {
     for (State& s : states) s.wasPressed = false;

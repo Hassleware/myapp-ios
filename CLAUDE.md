@@ -33,14 +33,17 @@ engine/model.cpp    glTF loading (cgltf), node lists, skeletons, animation sampl
 engine/collide.cpp  collision shapes, ray and sphere casts, overlaps, the character mover. No physics solver, by choice
 engine/audio.cpp    mixer on an SDL audio stream: clips, streamed .ogg (stb_vorbis), 3D, groups
 engine/script.cpp   Lua 5.4 host and the gfx / model / phys / audio / input / save / sys API given to games
-engine/input.cpp    touch sticks and buttons, raw touches, tilt, gamepad, with keyboard and mouse stand-ins
+engine/input.cpp    touch sticks and buttons, raw touches, tilt, gamepad, the on-screen keyboard and clipboard
+engine/net.cpp      HTTPS requests for games (WinHTTP on the PC, ios/http.mm on the phone) and every safety check on them
 engine/pool.h       numbered handles with a generation check; everything Lua holds is one of these
 engine/sync.cpp     loader only: finds the PC, downloads changed game files (POSIX sockets)
 engine/shaders/     common.slang (shared by every shader), mesh.slang, shadow.slang and their compiled .spv files
 games/<name>/       main.lua, lib.lua, optional game.cfg and shaders/*.slang, models, textures, sounds
-games/features/     a tour of every engine feature; its binary files come from tools/make_demo_assets.py
+games/net-demo/     the only game left in the folder: keyboard, paste and one web call. The older games (features,
+                    render-demo, shader-demo, runner) were deleted on request; they are in git history up to 261eb48
 ios/Info.plist.in   iPhone app settings
-ios/haptics.mm      the iPhone's tap motor (UIKit), the only Objective-C in the project
+ios/haptics.mm      the iPhone's tap motor (UIKit)
+ios/http.mm         HTTPS through NSURLSession. With haptics.mm, the only Objective-C in the project
 tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor, check
 tools/template/     what `new <name>` copies: main.lua and lib.lua (the Lua-side helper library)
 .github/workflows/build.yml   iPhone build
@@ -84,6 +87,14 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - Desktop loads Vulkan through **volk**. The iPhone build links MoltenVK statically and must **not** use volk, because volk's function-pointer names collide with MoltenVK's real functions. `gfx.cpp` switches on `USE_VOLK`.
 - Simplifications to revisit (each is marked `ponytail:` in the code): one frame in flight; frees wait for the GPU; one draw call per mesh (no instancing); textures are uncompressed RGBA with CPU-made mipmaps (no ASTC); assets load on the main thread (`lib.loader` spreads them over frames); capsules collide as a column of spheres and never tilt; sphere casts step along the line rather than solving exactly; the swapchain is rebuilt whenever the window's pixel size changes.
 
+### Keyboard and web calls (added 14 November 2026)
+
+- `input.keyboard(show, kind)` uses SDL's text input. Typed text is queued in `input.cpp` and handed to the game's `on_text` / `on_key` at the start of `script::update`. Kind `"code"` maps to SDL's number-password type, which SDL marks as a one-time code on iOS so the SMS code is offered above the keyboard.
+- `net.request` runs each request on its own thread (`net.cpp`); answers are collected in `script::update` and passed to the Lua callback. Answers for a game that has been reloaded are dropped.
+- **Security rules, all in `net.cpp`, do not loosen them:** https only; the host must be listed in the game's `game.cfg` (`hosts = ...`); URLs with a user name, backslash, space or non-ASCII character are refused, so the engine and the platform can never disagree about the host; header line breaks refused; redirects not followed; no cookies, cache or stored credentials; size and count caps. Certificate checking is the platform default and is never turned off. `GAMELAB_NET_CHECK=1` runs a self-check of these rules at the first game start and prints the result.
+- Left out on purpose, add when needed: response headers, a Keychain-backed `secret` store for login tokens (`save` is a plain file), certificate pinning, uploads and downloads to files, WebSockets, HTTPS on the Linux build, moving the view up when the keyboard covers a field.
+- The Wi-Fi sync between `dev.py` and the loader is plain HTTP with no login. That is acceptable on a home network for development only, and is one more reason release builds contain no sync code.
+
 ### Small traps already hit
 
 - The sync namespace is `devsync`, because `sync` collides with a POSIX function.
@@ -103,6 +114,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | The big engine build of November 2026 (textures, glTF, skinning, lights, shadows, targets, fonts, collision, audio, raw touches) | Tested on the PC with Vulkan validation clean, by screenshots and by a Lua self-test of collision, animation and audio numbers. **Untested on the phone** when this was written: the first iPhone build, MoltenVK's handling of the new passes, sound output, tilt, haptics (`ios/haptics.mm` has never been compiled on the PC), gamepad, the log file, `lua` from `dev.py`, `game.cfg` orientation |
 | Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa` served to the phone | Tested |
 | Updating the app on the phone | Game Lab is installed **inside LiveContainer**. `sidestore://install` failed (bundle mismatch) and `livecontainer://install` failed ("LiveContainer must refresh to install apps": it won't install while an app runs inside it). The working route, **tested**: DOWNLOAD UPDATE (Safari saves the IPA), then **+** in LiveContainer. Don't retry in-app install links |
+| Keyboard, clipboard and `net.request` (14 November 2026) | Tested on the PC: typing, backspace, a real HTTPS call, a 404, and refusals of plain http and unlisted hosts. **Untested on the phone**: `ios/http.mm` has never been compiled on the PC, the on-screen keyboard, the SMS code suggestion, the paste permission prompt |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
 | `release <game>` standalone build | **Untested** |
 | App Store signing and upload | **Not built** |
@@ -144,10 +156,10 @@ Keep the rule that **games ask the engine for things by name and never know wher
 
 Toward a shippable game within the month:
 
-1. **Confirm the Windows build** with `run runner` and fix any MSVC errors.
+1. **Confirm the Windows build** (done: `run <game>` builds with MSVC).
 2. **Confirm the private update flow** end to end on the phone; adjust the install link if SideStore inside LiveContainer doesn't accept it.
 3. **Speed up iPhone builds:** cache `build-ios/_deps` with `actions/cache`, or try the Ninja generator for iOS.
-4. **Done in the November 2026 engine build:** textures, glTF models and skinned animation, audio, collision, lights and shadows, fonts, raw touches, tilt, haptics, gamepad, orientation lock, culling. The user chose to write any physics simulation themselves in Lua on top of the collision queries, so **do not add Jolt or another physics library**. The aim of that build was that games need no further C++ for a long time; check `README.md` and `games/features/` before adding to the engine.
+4. **Done in the November 2026 engine build:** textures, glTF models and skinned animation, audio, collision, lights and shadows, fonts, raw touches, tilt, haptics, gamepad, orientation lock, culling. The user chose to write any physics simulation themselves in Lua on top of the collision queries, so **do not add Jolt or another physics library**. The aim of that build was that games need no further C++ for a long time; check `README.md` before adding to the engine.
 5. **Get that build onto the phone and fix what MoltenVK or iOS reject** (see the untested row above).
 6. **Make the game.** Blender for levels and characters (export `.glb`), Lua for everything else.
 7. **Phone polish left over:** scrolling on the game list.

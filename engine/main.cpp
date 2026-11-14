@@ -19,6 +19,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "model.h"
+#include "net.h"
 #include "script.h"
 
 #if defined(LOADER_SYNC)
@@ -155,6 +156,7 @@ void start_game(const std::string& name) {
     std::string dir = game_dir(name);
     release_assets(dir);
     apply_orientation(config_value(dir, "orientation"));
+    net::set_hosts(config_value(dir, "hosts"));
     script::load(dir, savesDir + "/" + name + ".txt");
     watchStamp = folder_stamp(dir);
 }

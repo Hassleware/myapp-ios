@@ -11,6 +11,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "model.h"
+#include "net.h"
 
 extern "C" {
 #include "lauxlib.h"
@@ -1012,6 +1013,54 @@ int l_stats(lua_State* l) {
     return 4;
 }
 
+// input.keyboard(show, kind) shows or hides the keyboard; with no arguments it says whether it is showing.
+int l_keyboard(lua_State* l) {
+    if (lua_gettop(l) > 0) input::keyboard(lua_toboolean(l, 1), luaL_optstring(l, 2, "text"));
+    lua_pushboolean(l, input::keyboard_shown());
+    return 1;
+}
+
+int l_paste(lua_State* l) {
+    lua_pushstring(l, input::clipboard().c_str());
+    return 1;
+}
+
+int l_copy(lua_State* l) {
+    input::set_clipboard(luaL_checkstring(l, 1));
+    return 0;
+}
+
+std::map<int, int> netCallbacks;   // request id -> the Lua function waiting for its answer
+
+// net.request({url=, method=, headers={}, body=, timeout=}, function(status, body, err) ... end)
+int l_net_request(lua_State* l) {
+    luaL_checktype(l, 1, LUA_TTABLE);
+    luaL_checktype(l, 2, LUA_TFUNCTION);
+    net::Request request;
+    size_t size = 0;
+    lua_getfield(l, 1, "url");
+    request.url = luaL_checkstring(l, -1);
+    lua_getfield(l, 1, "method");
+    request.method = luaL_optstring(l, -1, "GET");
+    lua_getfield(l, 1, "body");
+    const char* body = luaL_optlstring(l, -1, "", &size);
+    request.body.assign(body, size);
+    lua_getfield(l, 1, "timeout");
+    request.timeout = SDL_clamp((float)luaL_optnumber(l, -1, 15), 1.0f, 120.0f);
+    lua_getfield(l, 1, "headers");
+    if (lua_istable(l, -1)) {
+        lua_pushnil(l);
+        while (lua_next(l, -2)) {
+            if (lua_type(l, -2) == LUA_TSTRING && lua_type(l, -1) == LUA_TSTRING) request.headers.push_back({lua_tostring(l, -2), lua_tostring(l, -1)});
+            lua_pop(l, 1);
+        }
+    }
+    int id = net::send(request);
+    lua_pushvalue(l, 2);
+    netCallbacks[id] = luaL_ref(l, LUA_REGISTRYINDEX);
+    return 0;
+}
+
 int l_platform(lua_State* l) {
 #if defined(SDL_PLATFORM_IOS)
     lua_pushstring(l, "ios");
@@ -1131,7 +1180,9 @@ bool load(const std::string& dir, const std::string& saveFile) {
                                        {"group_pause", l_audio_group_pause}, {nullptr, nullptr}};
     const luaL_Reg inputFunctions[] = {{"controls", l_controls}, {"stick", l_stick}, {"down", l_down}, {"pressed", l_pressed},
                                        {"touches", l_touches}, {"key", l_key}, {"tilt", l_tilt}, {"gyro", l_gyro}, {"pad", l_pad},
-                                       {"haptic", l_haptic}, {nullptr, nullptr}};
+                                       {"haptic", l_haptic}, {"keyboard", l_keyboard}, {"paste", l_paste}, {"copy", l_copy},
+                                       {nullptr, nullptr}};
+    const luaL_Reg netFunctions[] = {{"request", l_net_request}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
                                      {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};
@@ -1140,6 +1191,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
     register_table("phys", physFunctions);
     register_table("audio", audioFunctions);
     register_table("input", inputFunctions);
+    register_table("net", netFunctions);
     register_table("save", saveFunctions);
     register_table("sys", sysFunctions);
     // The built-in shapes, usable with gfx.draw like any other mesh.
@@ -1174,6 +1226,8 @@ void unload() {
     L = nullptr;
     problem.clear();
     saves.clear();
+    netCallbacks.clear();   // answers still on their way are dropped when they arrive
+    input::keyboard(false);
     input::set_controls({});
     collide::clear();
 }
@@ -1181,6 +1235,38 @@ void unload() {
 void update(float dt) {
     if (!L) return;
     lastDt = dt;
+    // What the player typed, then the answers to web requests, before the game's own update.
+    std::string text;
+    bool isKey = false;
+    while (input::take_typed(text, isKey)) {
+        lua_pushstring(L, text.c_str());
+        call(isKey ? "on_key" : "on_text", 1);
+    }
+    net::Response response;
+    while (net::poll(response)) {
+        auto found = netCallbacks.find(response.id);
+        if (found == netCallbacks.end()) continue;   // asked for by a game that has since been reloaded
+        int ref = found->second;
+        netCallbacks.erase(found);
+        if (!problem.empty()) continue;
+        lua_pushcfunction(L, traceback);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+        luaL_unref(L, LUA_REGISTRYINDEX, ref);
+        if (response.status) {
+            lua_pushinteger(L, response.status);
+            lua_pushlstring(L, response.body.data(), response.body.size());
+            lua_pushnil(L);
+        } else {
+            lua_pushnil(L);
+            lua_pushnil(L);
+            lua_pushstring(L, response.error.c_str());
+        }
+        if (lua_pcall(L, 3, 0, -5) != LUA_OK) {
+            problem = lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error";
+            report("error", problem);
+        }
+        lua_settop(L, 0);
+    }
     float scaled = dt * timeScale;
     if (stepOnce) {
         // Asked for from the PC while stopped: move on by exactly one tick.

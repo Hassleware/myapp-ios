@@ -14,10 +14,10 @@ tools/      dev.py, the one tool you run
 ```
 python tools/dev.py doctor        check your tools (first time only)
 python tools/dev.py               watch the repo and serve the phone; type commands at its prompt
-python tools/dev.py run runner    build the PC version and play a game
+python tools/dev.py run net-demo    build the PC version and play a game
 python tools/dev.py ship "msg"    commit, push, build the phone app, fetch it to this PC
 python tools/dev.py status        what is out of date and what to do
-python tools/dev.py check runner  play a game inside every iPhone shape and list what each phone would hide
+python tools/dev.py check net-demo  play a game inside every iPhone shape and list what each phone would hide
 ```
 
 ## Two kinds of change
@@ -31,9 +31,9 @@ python tools/dev.py check runner  play a game inside every iPhone shape and list
 
 ## Writing a game
 
-`python tools/dev.py new my-game` creates `games/my-game/` with `main.lua` and `lib.lua`. `games/features/main.lua` is a working example of nearly everything below.
+`python tools/dev.py new my-game` creates `games/my-game/` with `main.lua` and `lib.lua`. `games/net-demo/main.lua` is a small example of the keyboard and web calls. The earlier example games (`features`, `render-demo`, `shader-demo`, `runner`) were removed from the folder but are still in the git history: `git checkout 261eb48 -- games/features` brings one back.
 
-The engine calls these if the game defines them: `init()`, `fixed_update(dt)` (a steady 60 times a second: movement and collision), `update(dt)`, `late_update(dt)` (cameras and things attached to other things), `draw()`, `on_pause()`, `on_resume()`.
+The engine calls these if the game defines them: `init()`, `fixed_update(dt)` (a steady 60 times a second: movement and collision), `update(dt)`, `late_update(dt)` (cameras and things attached to other things), `draw()`, `on_pause()`, `on_resume()`, and while the keyboard is up `on_text(text)` and `on_key("backspace" | "return")`.
 
 A transform is ten numbers: position `x, y, z`, rotation as a quaternion `qx, qy, qz, qw`, scale `sx, sy, sz`. Leave the end off for no rotation and scale 1. Colours are `r, g, b [, a]` from 0 to 1. Anything loaded gives back a number (a handle) to use later; a missing file gives a pink stand-in and one warning in the `dev.py` window, never a crash.
 
@@ -113,6 +113,11 @@ input.touches() -> { {id, x, y, dx, dy, phase = "down"|"move"|"up", claimed}, ..
 input.tilt() -> x, y, z     input.gyro() -> x, y, z     input.haptic("light"|"medium"|"heavy"|"success"|"warning"|"error")
 input.pad(name) -> number   -- a game controller: "leftx", "lefty", "rightx", "a", "b", "start"...
 input.key(name) -> bool     -- the PC keyboard, for testing
+input.keyboard(show [, kind]) -> showing    -- the phone's keyboard. kind: "text", "email", "number", "password", "code"
+input.paste() -> text       input.copy(text)         -- the clipboard. iOS asks the player before a paste
+
+-- the internet (https only, and only hosts listed in game.cfg)
+net.request({ url=, method="GET", headers={}, body=, timeout=15 }, function(status, body, err) ... end)
 
 -- everything else
 save.get(key, default)      save.set(key, value)
@@ -123,7 +128,11 @@ include("other.lua")        print(...)   -- prints show in the dev.py window, fr
 
 `lib.lua` is plain Lua on top of all that, and yours to edit: quaternion and vector helpers, `lib.run`/`lib.wait` scripts, timers, events, state machines, an animation player with cross-fades and timed events, shuffled sound cues, a particle emitter, splines, a table of translated text, and `lib.strict()` to turn misspelt globals into errors. Its comments say how each is used.
 
-A game may have a `game.cfg` with a line `orientation = landscape` (or `portrait`) to stop the phone turning it.
+A game may have a `game.cfg` with a line `orientation = landscape` (or `portrait`) to stop the phone turning it, and a line `hosts = api.example.com other.org` naming the web hosts it may call.
+
+**Typing.** `input.keyboard(true, kind)` brings the keyboard up; typed and pasted text arrives through `on_text`, and backspace and return through `on_key`. The game keeps the string and draws it itself (draw dots for a password). Kind `"code"` shows digits and lets iOS offer a one-time code that has just arrived by SMS. Draw text fields in the top half of the screen: the keyboard covers the bottom half.
+
+**Web calls.** `net.request` returns at once and calls your function later with `status, body` or with `nil, nil, err`. The engine refuses anything that is not `https://`, any host not listed in `game.cfg` (subdomains of a listed host are allowed), redirects, bodies over 1 MB, answers over 4 MB and more than 8 requests at once. Certificates are always checked and no cookies are kept. For JSON, drop a pure-Lua JSON file (for example rxi's `json.lua`) next to `main.lua` and `include` it. Never put a secret API key in a game: anyone can unzip an app and read it. Keys belong on a server of yours; the app should only hold what a player's own login gives it. `save.set` writes a plain file, so it is not the place for a long-lived login token (see the note in `CLAUDE.md`).
 
 2D drawing uses a screen whose shorter side is always 720 units, so layouts hold up in both orientations; `gfx.size()` gives the current width and height. On the PC, WASD or the arrow keys drive the first stick, and each button's `key` presses it.
 
@@ -133,7 +142,7 @@ A game may have a `game.cfg` with a line `orientation = landscape` (or `portrait
 
 ## Shaders
 
-Put `name.slang` in a game's `shaders/` folder and select it with `gfx.shader("name")`. Start from `games/shader-demo/shaders/pulse.slang`. Every shader begins with `#include "common.slang"`, which lives in `engine/shaders/` and lists everything a shader can read (camera, lights, the four texture slots, your `gfx.param` numbers) along with the standard lighting as functions to call. `dev.py` compiles it to SPIR-V when you save, and MoltenVK converts that to Metal Shading Language on the iPhone. The compiled `.spv` files are committed, so the GitHub build needs no shader compiler.
+Put `name.slang` in a game's `shaders/` folder and select it with `gfx.shader("name")`. Every shader begins with `#include "common.slang"`, which lives in `engine/shaders/` and lists everything a shader can read (camera, lights, the four texture slots, your `gfx.param` numbers) along with the standard lighting as functions to call. `dev.py` compiles it to SPIR-V when you save, and MoltenVK converts that to Metal Shading Language on the iPhone. The compiled `.spv` files are committed, so the GitHub build needs no shader compiler.
 
 ## Updating the app on the phone
 
@@ -141,4 +150,4 @@ Builds are never published. GitHub keeps each one as a private build file, `ship
 
 ## Releasing one game
 
-`python tools/dev.py release runner` builds `runner` as its own app and saves it to `tools/.ipa/runner.ipa`: only that game inside, no game list, no Wi-Fi syncing. The result is unsigned, which suits SideStore. An App Store upload also needs signing with an Apple Developer Program account.
+`python tools/dev.py release my-game` builds `my-game` as its own app and saves it to `tools/.ipa/my-game.ipa`: only that game inside, no game list, no Wi-Fi syncing. The result is unsigned, which suits SideStore. An App Store upload also needs signing with an Apple Developer Program account.

@@ -40,6 +40,14 @@ void gyro(float out[3]);                           // turning speed in radians a
 float pad(const std::string& name);                // a game controller's axis (-1 to 1) or button (0 or 1), by SDL's name
 void haptic(const std::string& kind);              // "light", "medium", "heavy", "success", "warning", "error"
 
+// The on-screen keyboard. kind: "text", "email", "number", "password", or "code" (digits; iOS offers a code that just arrived by SMS).
+void keyboard(bool show, const std::string& kind = "text");
+bool keyboard_shown();
+// What was typed since last asked, oldest first. isKey: text is "backspace" or "return" rather than typed characters.
+bool take_typed(std::string& text, bool& isKey);
+std::string clipboard();                           // on the iPhone, iOS asks the player before letting the app read it
+void set_clipboard(const std::string& text);
+
 // A touch or click that no control claimed this frame, in 2D screen units. Used by the game list.
 bool tap(float& x, float& y);
 

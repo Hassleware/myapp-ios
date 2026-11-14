@@ -45,11 +45,11 @@ endif()
 
 # ---- the app ----
 set(ENGINE_SOURCES engine/main.cpp engine/gfx.cpp engine/input.cpp engine/script.cpp
-    engine/model.cpp engine/collide.cpp engine/audio.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
+    engine/model.cpp engine/collide.cpp engine/audio.cpp engine/net.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   enable_language(OBJCXX)
-  list(APPEND ENGINE_SOURCES ios/haptics.mm)   # the phone's tap-feedback motor
-  set_source_files_properties(ios/haptics.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+  list(APPEND ENGINE_SOURCES ios/haptics.mm ios/http.mm)   # the phone's tap-feedback motor, and HTTPS through NSURLSession
+  set_source_files_properties(ios/haptics.mm ios/http.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 endif()
 
 # A standalone game may only be held one way up. Its game.cfg says so with a line like: orientation = landscape
@@ -85,6 +85,9 @@ target_link_libraries(gamelab PRIVATE SDL3::SDL3-static lua)
 target_compile_definitions(gamelab PRIVATE BUILD_FINGERPRINT="${BUILD_FINGERPRINT}")
 if(WITH_SYNC)
   target_compile_definitions(gamelab PRIVATE LOADER_SYNC)
+endif()
+if(WIN32)
+  target_link_libraries(gamelab PRIVATE winhttp)   # HTTPS on the PC (engine/net.cpp)
 endif()
 if(SINGLE_GAME)
   target_compile_definitions(gamelab PRIVATE SINGLE_GAME="${SINGLE_GAME}")
