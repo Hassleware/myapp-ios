@@ -146,7 +146,7 @@ Put `name.slang` in a game's `shaders/` folder and select it with `gfx.shader("n
 
 ## Updating the app on the phone
 
-Builds are never published. GitHub keeps each one as a private build file, `ship` fetches it to `tools/.ipa/` with your own login, and `dev.py` offers it to the phone over your Wi-Fi. When the PC holds a newer build than the app, the game list shows **DOWNLOAD UPDATE**, which saves the file through Safari. Then open LiveContainer, tap **+** and pick `GameLab.ipa`. (LiveContainer can't install an app while one is running inside it, so the app can't do this step for you.)
+Builds are never published. GitHub keeps each one as a private build file, `ship` fetches it to `tools/.ipa/` with your own login, and `dev.py` offers it to the phone over your Wi-Fi. When the PC holds a newer build than the app, the game list shows **DOWNLOAD UPDATE**, which saves the file through Safari. Then open LiveContainer, tap **+** and pick `GameLab-<build code>.ipa` (the code in the name is the build it holds, the same code the app and `dev.py` show). (LiveContainer can't install an app while one is running inside it, so the app can't do this step for you.)
 
 ## Releasing one game
 

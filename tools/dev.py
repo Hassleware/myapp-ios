@@ -268,13 +268,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def reply(self, body, status=200, kind="text/plain; charset=utf-8"):
+    def reply(self, body, status=200, kind="text/plain; charset=utf-8", save_as=None):
         if isinstance(body, str):
             body = body.encode()
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if save_as:   # the name Safari saves the file under
+            self.send_header("Content-Disposition", f'attachment; filename="{save_as}"')
         self.end_headers()
         self.wfile.write(body)
 
@@ -291,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(f"{games_revision()}\n{command['id']}\n{command['action']}\n{command['game']}\n{ipa_build()}\n")
         if parts == ["app", IPA_NAME] and (IPA_DIR / IPA_NAME).is_file():
             say("  [phone] downloading the new app build")
-            return self.reply((IPA_DIR / IPA_NAME).read_bytes(), kind="application/octet-stream")
+            return self.reply((IPA_DIR / IPA_NAME).read_bytes(), kind="application/octet-stream", save_as=f"GameLab-{ipa_build()}.ipa")
         if parts == ["api", "manifest"]:
             lines = []
             for name in game_names():
@@ -371,7 +373,7 @@ def advise_phone_build(build):
         say(f"! The app on the phone was built from older C++ (app {build}, repo {current}).")
         if ipa_build() == current:
             say("  The new build is ready on this PC. On the phone, go to the game list and tap DOWNLOAD UPDATE,")
-            say("  then in LiveContainer tap + and pick GameLab.ipa.")
+            say(f"  then in LiveContainer tap + and pick GameLab-{current}.ipa.")
         else:
             say("  Game files still sync, but engine changes are missing there. To update it, type: ship")
 
@@ -570,7 +572,7 @@ def cmd_ship(message=None):
     say("")
     say(f"The app is built (build {native_now}) and saved on this PC. It was not published anywhere.")
     say("On the phone: open Game Lab, go to the game list and tap DOWNLOAD UPDATE,")
-    say("then in LiveContainer tap + and pick GameLab.ipa.")
+    say(f"then in LiveContainer tap + and pick GameLab-{native_now}.ipa.")
     say("That needs this tool running (python tools/dev.py) and the phone on the same Wi-Fi.")
 
 
