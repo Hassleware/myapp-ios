@@ -2,10 +2,105 @@
 -- Everything is made here in Lua: no model or picture files. The look lives in shaders/toon.slang and shaders/water.slang.
 
 local lib = include("lib.lua")
+local tween = include("tween.lua")   -- github.com/kikito/tween.lua (MIT): eases any numbers in a table towards new values
 
 local cam = { yaw = 35, pitch = 24, distance = 15, spin = 0 }
 local island, sea, ripples
 local pinch                      -- distance between two fingers last frame
+
+-- ---------------------------------------------------------------- the four compass buttons
+
+-- Each button swings the camera round to look at the island from that side.
+-- ax, ay: which way the button sits from the middle of the screen.
+local buttons = {
+  { id = "N", name = "NORTH", yaw = 180, ax = 0,  ay = -1 },
+  { id = "E", name = "EAST",  yaw = 90,  ax = 1,  ay = 0 },
+  { id = "S", name = "SOUTH", yaw = 0,   ax = 0,  ay = 1 },
+  { id = "W", name = "WEST",  yaw = 270, ax = -1, ay = 0 },
+}
+local tweens = {}                -- every animation in progress
+local held = {}                  -- which button each finger is on, by touch id
+local selected, turning          -- the button last chosen, and the camera's swing while it lasts
+local banner = { show = 0, text = "" }
+local font
+
+-- Starts an animation: over `seconds`, the numbers in `subject` move to those in `target`.
+local function animate(seconds, subject, target, easing)
+  local t = tween.new(seconds, subject, target, easing)
+  tweens[#tweens + 1] = t
+  return t
+end
+
+local function place_buttons()
+  local w, h = gfx.size()
+  local left, top, right, bottom = gfx.safe()
+  local cx, cy = (left + w - right) / 2, (top + h - bottom) / 2 + 10
+  -- As far out as the screen allows, but never spread wider than the island looks.
+  local rx = math.min((w - left - right) / 2 - 70, 330)
+  local ry = math.min((h - top - bottom) / 2 - 75, 250)
+  for _, b in ipairs(buttons) do b.x, b.y = cx + b.ax * rx, cy + b.ay * ry end
+end
+
+local function choose(b)
+  if selected and selected ~= b then animate(0.25, selected, { glow = 0 }, "outQuad") end
+  selected = b
+  animate(0.25, b, { glow = 1 }, "outQuad")
+  -- Turn the short way round, and settle the tilt and zoom, with a little overshoot at the end.
+  local delta = (b.yaw - cam.yaw + 180) % 360 - 180
+  cam.spin = 0
+  turning = animate(0.9, cam, { yaw = cam.yaw + delta, pitch = 24, distance = 15 }, "outBack")
+  banner.text, banner.show = b.name, 0
+  animate(0.45, banner, { show = 1 }, "outBack")
+  lib.after(1.6, function() if banner.text == b.name then animate(0.3, banner, { show = 0 }, "inQuad") end end)
+  input.haptic("light")
+end
+
+-- A box with round corners, built from thin strips that get shorter towards each corner.
+-- No two pieces overlap, so a see-through box stays the same shade all over.
+local function round_rect(x, y, w, h, r, red, green, blue, a)
+  r = math.min(r, w / 2, h / 2)
+  local strips = 7
+  local step = r / strips
+  for i = 0, strips - 1 do
+    local dy = r - (i + 0.5) * step
+    local inset = r - math.sqrt(r * r - dy * dy)
+    gfx.rect(x + inset, y + i * step, w - 2 * inset, step, red, green, blue, a)
+    gfx.rect(x + inset, y + h - (i + 1) * step, w - 2 * inset, step, red, green, blue, a)
+  end
+  gfx.rect(x, y + r, w, h - 2 * r, red, green, blue, a)
+end
+
+-- Thick letters with a dark edge and a drop shadow.
+local function chunky_text(s, cx, y, size, r, g, b)
+  local x = cx - gfx.text_width(s, size) / 2
+  local edge = math.max(2, size * 0.07)
+  gfx.text(s, x, y + edge * 2, size, 0.05, 0.07, 0.20, 0.9)
+  for i = 0, 7 do
+    local a = i * math.pi / 4
+    gfx.text(s, x + math.cos(a) * edge, y + math.sin(a) * edge, size, 0.05, 0.07, 0.20)
+  end
+  gfx.text(s, x, y, size, r, g, b)
+end
+
+local function draw_button(b)
+  local s = b.scale
+  if s <= 0.01 then return end
+  local size = 96 * s
+  local x, y = b.x - size / 2, b.y - size / 2
+  local lip = 9 * s                                     -- the thick lower edge the face sinks into when pressed
+  local sink = b.press * lip * 0.8
+  -- Blue normally, gold once chosen: blended by glow.
+  local function mix(blue, gold) return blue + (gold - blue) * b.glow end
+  local fr, fg, fb = mix(0.22, 1.00), mix(0.58, 0.78), mix(1.00, 0.16)
+  local lr, lg, lb = mix(0.09, 0.78), mix(0.30, 0.45), mix(0.72, 0.04)
+
+  round_rect(x - 2, y + 12 * s, size + 4, size + lip, 24 * s, 0, 0, 0, 0.30)                       -- shadow
+  round_rect(x - 5 * s, y - 5 * s + sink, size + 10 * s, size + lip + 10 * s - sink, 26 * s, 0.05, 0.07, 0.20, 1)   -- dark outline
+  round_rect(x, y + lip, size, size, 22 * s, lr, lg, lb, 1)                                         -- lower edge
+  round_rect(x, y + sink, size, size, 22 * s, fr, fg, fb, 1)                                        -- face
+  round_rect(x + 7 * s, y + sink + 6 * s, size - 14 * s, size * 0.42, 16 * s, 1, 1, 1, 0.28)        -- shine
+  chunky_text(b.id, b.x, y + sink + size * 0.20, 54 * s, 1, 1, 1)
+end
 
 -- Colours are picked the usual way (as on a colour picker) and converted for mesh vertices, which want linear light.
 local function lin(c) return c ^ 2.2 end
@@ -68,14 +163,52 @@ function init()
   end)
   sea = grid(160, 64, function() return 0 end, function() return 1, 1, 1 end)
   ripples = ripple_texture(128)
+  font = gfx.load_font("DejaVuSans-Bold.ttf", 64)
+
+  -- The buttons pop in one after another.
+  for i, b in ipairs(buttons) do
+    b.scale, b.press, b.glow = 0, 0, 0
+    lib.after(0.25 + i * 0.12, function() animate(0.6, b, { scale = 1 }, "outElastic") end)
+  end
 end
 
 function update(dt)
+  lib.update(dt)
+  for i = #tweens, 1, -1 do
+    if tweens[i]:update(dt) then
+      if tweens[i] == turning then turning = nil end
+      table.remove(tweens, i)
+    end
+  end
+
+  -- Fingers that land on a button belong to it. The rest turn and zoom the island.
+  place_buttons()
   local fingers = {}
   for _, t in ipairs(input.touches()) do
-    if not t.claimed and t.phase ~= "up" then fingers[#fingers + 1] = t end
+    local b = held[t.id]
+    if t.phase == "down" then
+      for _, candidate in ipairs(buttons) do
+        if math.abs(t.x - candidate.x) < 58 and math.abs(t.y - candidate.y) < 58 then b = candidate end
+      end
+      held[t.id] = b
+      if b then animate(0.08, b, { press = 1, scale = 0.94 }, "outQuad") end
+    end
+    if b and t.phase == "up" then
+      held[t.id] = nil
+      animate(0.5, b, { press = 0, scale = 1 }, "outElastic")
+      if math.abs(t.x - b.x) < 70 and math.abs(t.y - b.y) < 70 then choose(b) end
+    elseif not b and not t.claimed and t.phase ~= "up" then
+      fingers[#fingers + 1] = t
+    end
   end
-  if #fingers == 1 then
+
+  if turning then
+    -- A button is swinging the camera. A finger on the island takes over again.
+    if #fingers > 0 then
+      for i, t in ipairs(tweens) do if t == turning then table.remove(tweens, i) break end end
+      turning = nil
+    end
+  elseif #fingers == 1 then
     cam.spin = -fingers[1].dx * 0.3 / math.max(dt, 0.001)
     cam.pitch = lib.clamp(cam.pitch + fingers[1].dy * 0.2, 6, 80)
     pinch = nil
@@ -85,9 +218,9 @@ function update(dt)
     pinch = apart
   else
     pinch = nil
-    cam.spin = lib.approach(cam.spin, 4, 2, dt)        -- let go: it coasts, then drifts round slowly
+    cam.spin = lib.approach(cam.spin, selected and 0 or 4, 2, dt)   -- let go: it coasts, then drifts round slowly (or stays, once a side is chosen)
   end
-  cam.yaw = cam.yaw + cam.spin * dt
+  if not turning then cam.yaw = cam.yaw + cam.spin * dt end
   if input.key("w") or input.key("up") then cam.distance = cam.distance * (1 - dt) end
   if input.key("s") or input.key("down") then cam.distance = cam.distance * (1 + dt) end
   cam.distance = lib.clamp(cam.distance, 5, 34)
@@ -128,7 +261,8 @@ function draw()
   gfx.shadows(0, 0, 0, 9, 1)                            -- full-strength shadows: the toon shader decides how dark they look
 
   local yaw, pitch = math.rad(cam.yaw), math.rad(cam.pitch)
-  local d = cam.distance
+  local w, h = gfx.size()
+  local d = cam.distance * math.max(1, h / w * 0.8)     -- held upright the screen is narrow, so stand further back
   gfx.camera(math.sin(yaw) * math.cos(pitch) * d, 0.8 + math.sin(pitch) * d, math.cos(yaw) * math.cos(pitch) * d, 0, 0.8, 0, 45, 0.3, 300)
 
   gfx.shader("toon")
@@ -158,4 +292,16 @@ function draw()
   local left, top = gfx.safe()
   gfx.text("RENDER DEMO", left + 80, top + 24, 22, 1, 1, 1)
   gfx.text("DRAG TO TURN   PINCH TO ZOOM", left + 80, top + 54, 12, 1, 1, 1, 0.8)
+
+  place_buttons()
+  gfx.font(font)
+  for _, b in ipairs(buttons) do draw_button(b) end
+  -- The name of the chosen side pops up in the middle and shrinks away again.
+  if banner.show > 0.01 then
+    local size = 46 * banner.show
+    local tw = gfx.text_width(banner.text, size)
+    round_rect(w / 2 - tw / 2 - 26, h * 0.5 - size * 0.25 - 4, tw + 52, size * 1.5 + 8, 22, 0.05, 0.07, 0.20, 0.55 * math.min(banner.show, 1))
+    chunky_text(banner.text, w / 2, h * 0.5, size, 1.0, 0.86, 0.25)
+  end
+  gfx.font()
 end
