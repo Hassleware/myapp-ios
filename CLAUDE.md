@@ -44,7 +44,11 @@ games/net-demo/     the only game left in the folder: keyboard, paste and one we
 ios/Info.plist.in   iPhone app settings
 ios/haptics.mm      the iPhone's tap motor (UIKit)
 ios/http.mm         HTTPS through NSURLSession. With haptics.mm, the only Objective-C in the project
-tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor, check
+tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor, check, docs
+docs/               the handbook (MkDocs + Material): onboarding, a tutorial per language, engine tour, reference
+docs/hooks.py       pulls real code into pages by name and checks the Lua API description against script.cpp
+docs/api/gamelab.lua  every Lua function described once: feeds the handbook, the drift check and VS Code (.luarc.json)
+mkdocs.yml          the handbook's settings and menu
 tools/template/     what `new <name>` copies: main.lua and lib.lua (the Lua-side helper library)
 .github/workflows/build.yml   iPhone build
 ```
@@ -94,6 +98,14 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - **Security rules, all in `net.cpp`, do not loosen them:** https only; the host must be listed in the game's `game.cfg` (`hosts = ...`); URLs with a user name, backslash, space or non-ASCII character are refused, so the engine and the platform can never disagree about the host; header line breaks refused; redirects not followed; no cookies, cache or stored credentials; size and count caps. Certificate checking is the platform default and is never turned off. `GAMELAB_NET_CHECK=1` runs a self-check of these rules at the first game start and prints the result.
 - Left out on purpose, add when needed: response headers, a Keychain-backed `secret` store for login tokens (`save` is a plain file), certificate pinning, uploads and downloads to files, WebSockets, HTTPS on the Linux build, moving the view up when the keyboard covers a field.
 - The Wi-Fi sync between `dev.py` and the loader is plain HTTP with no login. That is acceptable on a home network for development only, and is one more reason release builds contain no sync code.
+
+### The handbook (added 14 November 2026)
+
+- `python tools/dev.py docs` serves it on port 8766 with live rebuild; `docs` at the prompt does the same in the background. It needs `pip install mkdocs-material`, the one non-standard-library dependency in the repo, and only for the handbook.
+- Pages never paste engine code. A line `::: source <file> <name>` is replaced at build time with that function, struct or constant as it is now, with real line numbers. A name that no longer exists **stops the build**, so renaming something in the engine means fixing the page that explains it.
+- **When adding or removing a Lua function, edit `docs/api/gamelab.lua` too.** The build warns by name about any function registered in `script.cpp` but not described, and the reverse. `python -m mkdocs build --strict` turns that into a failure.
+- Nothing under `docs/`, `mkdocs.yml` or `.luarc.json` is in the native fingerprint, so docs changes never ask for an app build.
+- Material for MkDocs has announced end of life on 5 May 2027 (its makers' successor is Zensical, which reads the same `mkdocs.yml`). The hook uses only MkDocs' standard `hooks:` interface; check it still runs before migrating.
 
 ### Small traps already hit
 

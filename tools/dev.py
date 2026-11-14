@@ -9,6 +9,7 @@
     python tools/dev.py release <game>   build one game as its own standalone app
     python tools/dev.py check <game>     list any 2D drawing or touch control an iPhone's notch, island or corners would hide
     python tools/dev.py doctor       check that the tools this repo needs are installed
+    python tools/dev.py docs         serve the handbook (docs/) in your browser, rebuilt as the code changes
 
 Two kinds of change, and the tool tells you which one you made:
     live     Lua, shaders, levels and other game files. Sent to the phone over Wi-Fi as you save.
@@ -684,6 +685,35 @@ def cmd_doctor():
     say("A graphics driver with Vulkan 1.2 is also needed to run games on the PC. Any recent NVIDIA, AMD or Intel driver has it.")
 
 
+# ---------------------------------------------------------------- the handbook
+
+DOCS_PORT = PORT + 1
+
+
+def cmd_docs(background=False):
+    """Serves the handbook: the pages in docs/ plus code pulled from the repo by docs/hooks.py."""
+    try:
+        import material  # noqa: F401  (the theme; installing it brings MkDocs with it)
+    except ImportError:
+        say("The handbook needs MkDocs with the Material theme. Install them once with:")
+        say("    python -m pip install mkdocs-material")
+        return
+    os.environ.setdefault("NO_MKDOCS_2_WARNING", "1")   # a notice about MkDocs' future that is noise here
+    url = f"http://localhost:{DOCS_PORT}"
+    say(f"Handbook: {url}   (from another device on your Wi-Fi: http://{lan_address()}:{DOCS_PORT})")
+    say("It rebuilds when you save a page or any code it shows." + ("" if background else " Ctrl+C stops it."))
+    # --livereload is spelt out because some versions of MkDocs' dependencies leave it off by default.
+    command = [sys.executable, "-m", "mkdocs", "serve", "--livereload", "--dev-addr", f"0.0.0.0:{DOCS_PORT}"]
+    threading.Timer(3, lambda: __import__("webbrowser").open(url)).start()
+    if background:
+        subprocess.Popen(command, cwd=REPO, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        try:
+            subprocess.run(command, cwd=REPO)
+        except KeyboardInterrupt:
+            pass
+
+
 # ---------------------------------------------------------------- the interactive session
 
 HELP = """Commands:
@@ -692,6 +722,7 @@ HELP = """Commands:
   play <game>    open a game on the phone          menu     back to the phone's game list
   reload         restart the game on the phone     list     show all games
   status         what is out of date               ship [message]   build a new app for the phone
+  docs           open the handbook in your browser
   lua <code>     run a line of Lua in the game on the phone, e.g.  lua player.speed = 9   or   lua sys.time_scale(0.2)
   quit"""
 
@@ -728,6 +759,8 @@ def console():
             cmd_run(rest or None)
         elif word == "status":
             cmd_status()
+        elif word == "docs":
+            cmd_docs(background=True)
         elif word == "ship":
             cmd_ship(rest.strip('"') or None)
         elif word in ("quit", "exit"):
@@ -786,6 +819,8 @@ def main():
         cmd_release(args[1])
     elif command == "doctor":
         cmd_doctor()
+    elif command == "docs":
+        cmd_docs()
     elif command == "fingerprint":
         print(fingerprint())
     elif command == "shaders":

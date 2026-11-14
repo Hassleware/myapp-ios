@@ -9,6 +9,8 @@ ios/        iPhone app settings
 tools/      dev.py, the one tool you run
 ```
 
+**New here? Read the handbook:** `python tools/dev.py docs` opens it in your browser (once: `python -m pip install mkdocs-material`). It has onboarding, a tutorial for each language used here, a tour of the engine and the full reference, and it shows code straight from this repo so it cannot go stale.
+
 ## Daily use
 
 ```
@@ -17,6 +19,7 @@ python tools/dev.py               watch the repo and serve the phone; type comma
 python tools/dev.py run net-demo    build the PC version and play a game
 python tools/dev.py ship "msg"    commit, push, build the phone app, fetch it to this PC
 python tools/dev.py status        what is out of date and what to do
+python tools/dev.py docs          serve the handbook (docs/) with live rebuild
 python tools/dev.py check net-demo  play a game inside every iPhone shape and list what each phone would hide
 ```
 

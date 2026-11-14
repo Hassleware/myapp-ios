@@ -1,0 +1,123 @@
+# The Game Lab handbook. Read it with:  python tools/dev.py docs
+# Pages are Markdown in docs/. docs/hooks.py pulls real code out of the repo into them at build time,
+# so what the handbook shows is always what the code says.
+site_name: Game Lab Handbook
+site_description: Onboarding, tutorials and reference for the Game Lab engine and its games.
+repo_url: https://github.com/Hassleware/myapp-ios
+repo_name: Hassleware/myapp-ios
+edit_uri: ""
+docs_dir: docs
+site_dir: build/docs-site
+
+# A link to a heading that does not exist is reported, not ignored.
+validation:
+  anchors: warn
+
+hooks:
+  - docs/hooks.py
+# Saving any of these rebuilds the handbook while it is being served.
+watch:
+  - engine
+  - ios
+  - games
+  - tools
+  - .github/workflows
+exclude_docs: |
+  hooks.py
+  api/
+  __pycache__/
+
+theme:
+  name: material
+  font: false          # no fonts fetched from the internet: the handbook works offline
+  icon:
+    logo: material/gamepad-variant
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+      clickable_checkbox: true
+
+extra_javascript:
+  - js/progress.js
+
+nav:
+  - Home: index.md
+  - Onboarding:
+      - Your first day: onboarding/day-one.md
+      - Your first game: onboarding/first-game.md
+      - How work reaches the phone: onboarding/shipping.md
+      - Glossary: onboarding/glossary.md
+  - Languages:
+      - Which language goes where: languages/index.md
+      - Lua (gameplay): languages/lua.md
+      - C++ (the engine): languages/cpp.md
+      - Slang (shaders): languages/slang.md
+      - Python (the dev tool): languages/python.md
+      - Objective-C++ (iPhone parts): languages/objc.md
+      - CMake and YAML (builds): languages/build-files.md
+  - Engine:
+      - The big picture: engine/overview.md
+      - A frame, start to finish: engine/lifecycle.md
+      - Renderer: engine/renderer.md
+      - Models and animation: engine/models.md
+      - Collision: engine/collision.md
+      - Audio: engine/audio.md
+      - Input and keyboard: engine/input.md
+      - Web calls: engine/networking.md
+      - Wi-Fi sync: engine/sync.md
+  - Guides:
+      - Add an engine feature: guides/engine-feature.md
+      - Debugging: guides/debugging.md
+      - Screens that fit every iPhone: guides/layout.md
+      - Releasing a game: guides/release.md
+      - Writing these docs: guides/docs.md
+  - Reference:
+      - Lua API: reference/lua-api.md
+      - lib.lua helpers: reference/lib.md
+      - C++ headers: reference/headers.md
+      - Shader interface: reference/shader-interface.md
+      - dev.py and its server: reference/dev-tool.md
+      - game.cfg: reference/game-cfg.md
