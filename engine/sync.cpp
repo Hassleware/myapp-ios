@@ -1,6 +1,7 @@
 #include "sync.h"
 
 #include <arpa/inet.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -310,6 +311,29 @@ bool sync_games(const std::string& host) {
             it = record.erase(it);
         }
         write_record(game.first, record);
+    }
+    // Games deleted on the PC: take away the files that were synced for them, then their emptied folders.
+    std::vector<std::string> gone;
+    if (DIR* listing = opendir(gamesRoot.c_str())) {
+        while (dirent* entry = readdir(listing))
+            if (valid_name(entry->d_name) && !wanted.count(entry->d_name)) gone.push_back(entry->d_name);
+        closedir(listing);
+    }
+    for (const std::string& name : gone) {
+        std::string dir = gamesRoot + "/" + name + "/";
+        std::map<std::string, std::string> record = read_record(name);
+        for (const auto& file : record)
+            if (safe_path(file.first)) remove((dir + file.first).c_str());
+        for (const auto& file : record) {
+            // Folders inside the game, deepest first. rmdir leaves alone any folder that still holds something.
+            std::string path = file.first;
+            for (size_t slash = path.rfind('/'); slash != std::string::npos && safe_path(path); slash = path.rfind('/')) {
+                path.resize(slash);
+                rmdir((dir + path).c_str());
+            }
+        }
+        remove((dir + ".sync").c_str());
+        rmdir(dir.c_str());
     }
     writing = false;
     return ok;
