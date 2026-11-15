@@ -9,6 +9,7 @@ on:
       - "engine/**"
       - "ios/**"
       - "CMakeLists.txt"
+      - "tests/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
@@ -34,6 +35,16 @@ jobs:
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
+
+      # The phone's sync code can't be compiled on Windows, so it is tested here, against a real dev.py,
+      # before any app is built. A failure stops the build, so a broken link to the PC never reaches the phone.
+      - name: Test the phone's link to dev.py
+        run: |
+          clang++ -std=c++17 -Wall -Iengine engine/sync.cpp tests/sync_test.cpp -o sync_test -pthread
+          find . -name "*.spv" -exec touch {} +   # the committed shaders count as up to date, so dev.py compiles nothing
+          python3 tools/dev.py > devpy.log 2>&1 &
+          for i in $(seq 1 30); do curl -s localhost:8765/api/hello | grep -q gamelab && break; sleep 1; done
+          ./sync_test "$PWD" || { echo "---- dev.py said:"; cat devpy.log; exit 1; }
 
       - name: Download MoltenVK (runs Vulkan on the iPhone's Metal)
         run: |
