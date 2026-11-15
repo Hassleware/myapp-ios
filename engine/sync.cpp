@@ -182,7 +182,8 @@ int exchange(const std::string& host, const std::string& method, const std::stri
     while ((n = recv(fd, chunk, sizeof(chunk), 0)) > 0 && raw.size() <= maxBytes) raw.append(chunk, (size_t)n);
     close(fd);
     size_t split_at = raw.find("\r\n\r\n");
-    if (split_at == std::string::npos || raw.compare(0, 5, "HTTP/") != 0 || raw.size() > maxBytes + split_at + 4) return 0;
+    if (split_at == std::string::npos || raw.compare(0, 5, "HTTP/") != 0) return 0;
+    if (raw.size() - (split_at + 4) > maxBytes) return 0;   // the body alone; maxBytes may be the largest size_t
     size_t space = raw.find(' ');
     int status = space < split_at ? atoi(raw.c_str() + space + 1) : 0;
     response = raw.substr(split_at + 4);

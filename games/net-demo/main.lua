@@ -65,7 +65,9 @@ local function layout()
   return x, y, width
 end
 
+local last_reply
 function update()
+  if reply ~= last_reply then print("net-demo: " .. reply) last_reply = reply end   -- also shown in the dev.py window
   layout()
   for _, t in ipairs(input.touches()) do
     if t.phase == "down" then
