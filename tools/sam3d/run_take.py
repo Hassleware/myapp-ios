@@ -26,6 +26,8 @@ MHR = "checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt"
 FOCAL_MM = 26          # the iPhone 11's wide camera, as a full-frame equivalent
 SMOOTH = 5             # frames in the moving average (odd); 1 turns smoothing off
 FOOT_LOCK = True       # keep a planted foot from sliding (moves the whole body, never the pose)
+SIMPLE = True          # leave out MHR's 40 twist helpers and the tongue and teeth: 81 bones, easier to retarget
+DROP = ("twist", "_proc", "tongue", "teeth")
 FLIP = np.diag([1.0, -1.0, -1.0])   # camera space (y down, z ahead) to y up, facing the camera
 
 
@@ -109,6 +111,20 @@ def lock_feet(positions, names, fps):
     return locked, before, sliding(locked)
 
 
+def simplify(positions, rotations, parents, names):
+    """Drops helper joints. A kept joint whose parent was dropped hangs from its nearest kept ancestor; the BVH
+    works its offsets and turns out from world positions and rotations, so the motion itself doesn't change."""
+    keep = [i for i, n in enumerate(names) if not any(d in n for d in DROP)]
+    index = {old: new for new, old in enumerate(keep)}
+    new_parents = []
+    for i in keep:
+        p = parents[i]
+        while p >= 0 and p not in index:
+            p = parents[p]
+        new_parents.append(index[p] if p >= 0 else -1)
+    return positions[:, keep], rotations[:, keep], new_parents, [names[i] for i in keep]
+
+
 def orthonormal(rotations):
     """Nearest true rotations to (averaged) matrices."""
     u, _, vt = np.linalg.svd(rotations)
@@ -186,6 +202,9 @@ def main():
         positions, before, after = lock_feet(positions, names, fps)
         if before is not None:
             print(f"foot sliding while planted: {before:.0f} mm/s before locking, {after:.0f} mm/s after", flush=True)
+    if SIMPLE:
+        positions, rotations, parents, names = simplify(positions, rotations, parents, names)
+        count = len(names)
     write_bvh(prefix + "-sam3d.bvh", positions, rotations, parents, names, fps)
 
     # The phone's replay: every other frame at centimetre precision keeps a minute's take under 2 MB.
