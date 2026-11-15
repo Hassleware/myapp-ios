@@ -253,8 +253,11 @@ def create_backend(name):
         return f"backends/{name}/server.py already exists."
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(TOOLS / "backend_template.py", target)
-    return (f"Created backends/{name}/server.py. While this tool runs, the game reaches it with\n"
-            f'  net.backend({{ path = "/scores" }}, function(status, body, err) ... end)')
+    client = GAMES / name / "auth.lua"
+    if not client.exists():
+        shutil.copy(TOOLS / "backend_client.lua", client)
+    return (f"Created backends/{name}/server.py (accounts and sign-in) and games/{name}/auth.lua to call it:\n"
+            f'  local auth = include("auth.lua")   auth.register(email, password, function(ok, err) end)')
 
 
 # ---------------------------------------------------------------- game backends

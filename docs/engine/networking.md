@@ -111,20 +111,50 @@ The iPhone side is `ios/http.mm`, walked through on the [Objective-C++](../langu
 
 ## The game's own backend
 
-A game can have server code of its own: a leaderboard, accounts, matchmaking, saved progress. It is Python, it lives in **`backends/<game>/server.py`**, and while you develop it runs **on your PC**, inside `dev.py`. It is never sent to the phone or put inside an app.
+A game can have server code of its own: accounts, saved progress, scores, matchmaking. It is Python, it lives in **`backends/<game>/server.py`**, and while you develop it runs **on your PC**, inside `dev.py`. It is never sent to the phone or put inside an app.
 
 ```
 python tools/dev.py backend coin-dash
 ```
 
-creates the file from a template with a working leaderboard. The game calls it with `net.backend`, which takes a `path` where `net.request` takes a `url`:
+creates two files:
+
+| File | What it is |
+|---|---|
+| `backends/coin-dash/server.py` | Accounts and sign-in, the part nearly every game and app needs: register, log in, log out, who am I, delete my account. Add the game's own calls at the bottom |
+| `games/coin-dash/auth.lua` | The game's side of it |
 
 ```lua
-net.backend({ path = "/scores", method = "POST", body = '{"name":"Ann","score":42}' }, function(status, body, err) end)
-net.backend({ path = "/scores" }, function(status, body, err)
-  if status == 200 then print(body) end      -- [{"name": "Ann", "score": 42}]
-end)
+local auth = include("auth.lua")
+
+auth.register("ann@example.com", "correct horse", function(ok, err) end)
+auth.login("ann@example.com", "correct horse", function(ok, err) end)
+auth.me(function(user, err) print(user.id, user.email) end)
+auth.call("POST", "/save", '{"level": 3}', function(text, err) end)   -- your own calls, sent signed in
+auth.logout()      auth.delete()      auth.signed_in()
 ```
+
+Underneath, `auth.lua` uses `net.backend`, which takes a `path` where `net.request` takes a `url`:
+
+```lua
+net.backend({ path = "/me", headers = { Authorization = "Bearer " .. token } }, function(status, body, err) end)
+```
+
+### What the sign-in follows
+
+The template follows the OWASP password-storage and session cheat sheets and NIST SP 800-63B:
+
+| Practice | In the template |
+|---|---|
+| A slow, memory-hard password hash with a salt per password | scrypt with OWASP's settings (2^17, 8, 1); the settings are stored with each hash so they can be raised later |
+| Length rules only | 8 to 128 characters, no forced symbols, no expiry; text normalised (NFKC) before hashing |
+| Unguessable, revocable sessions | 256 random bits per token; only its SHA-256 is stored; 30 days; logout and deletion end it |
+| No hints about which emails exist | Login gives the same answer, after the same work, for an unknown email and a wrong password |
+| Slowing down guessing | Five failed logins for an email in 15 minutes, and that email is refused for the rest of the window |
+| No timing leaks | Secrets compared with `hmac.compare_digest` |
+| Account deletion inside the app | `DELETE /me`. The App Store requires it of any app that creates accounts |
+
+Not included yet: email verification and password reset (both need a way to send email), Sign in with Apple, and refresh tokens. On the phone, `auth.lua` keeps the token with `save`, which is a plain file; move it to the iOS Keychain before release.
 
 The game never says where the server is. The engine decides:
 
@@ -145,7 +175,7 @@ How `dev.py` passes a call on:
 ::: source tools/dev.py backend_module
 
 !!! warning "What the development link is and is not"
-    The path from the phone to `dev.py` is plain HTTP on your own Wi-Fi, like the file sync. That is fine for development. Players never use it: a release build only knows the HTTPS address in `game.cfg`. Plain `http://` stays refused for `net.request`; only `net.backend`, whose address the engine builds itself, can reach the dev PC.
+    The path from the phone to `dev.py` is plain HTTP on your own Wi-Fi, like the file sync. Passwords typed while developing cross your network unencrypted, so use test accounts. Players never use it: a release build only knows the HTTPS address in `game.cfg`. Plain `http://` stays refused for `net.request`; only `net.backend`, whose address the engine builds itself, can reach the dev PC.
 
 **For a release**, the same `server.py` runs on its own (`python server.py 8080`) on a server you rent, behind HTTPS, and `game.cfg` gets its address. This path is **not yet tested**. A real deployment also wants a production web server in front and backups of the database.
 

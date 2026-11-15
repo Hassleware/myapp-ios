@@ -181,4 +181,4 @@ This plays the game inside twelve iPhone shapes, upright and sideways, and lists
 - [Lua (gameplay)](../languages/lua.md) if Lua is new to you.
 - [Lua API](../reference/lua-api.md) for everything the engine offers.
 - [Slang (shaders)](../languages/slang.md) to change how things look.
-- [Web calls](../engine/networking.md#the-games-own-backend) to give the game a leaderboard: `python tools/dev.py backend coin-dash`.
+- [Web calls](../engine/networking.md#the-games-own-backend) to give the game accounts and its own server: `python tools/dev.py backend coin-dash`.
