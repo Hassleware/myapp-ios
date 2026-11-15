@@ -10,7 +10,7 @@ Game Lab can record a person's movement with the iPhone's back camera and turn i
 4. Tap **RECORD**. After a 3-second countdown, perform. Tap **STOP**.
 5. Tap **SEND**. The take arrives as `captures/take-N.bvh` in the repository (git ignores the folder), and `dev.py` prints where it went.
 
-In Blender: **File > Import > Motion Capture (.bvh)**, scale 1 (one unit is a metre), forward **-Z**, up **Y**. Then retarget the motion onto your armature, for example with Rokoko's free Blender add-on, and export your character as `.glb` with its animations (see [Models and animation](models.md)).
+In Blender: **File > Import > Motion Capture (.bvh)**, scale 1 (one unit is a metre), forward **-Z**, up **Y**. Or open `tools/blender_import_take.py` in Blender's Scripting tab and run it: it imports the newest take with those settings and its frame rate. Then retarget the motion onto your armature, for example with Rokoko's free Blender add-on, and export your character as `.glb` with its animations (see [Models and animation](models.md)).
 
 ## GVHMR: a stronger model on the PC
 

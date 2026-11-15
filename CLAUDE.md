@@ -131,6 +131,9 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - **Coordinate trap:** `pred_joint_coords` (+ `pred_cam_t`) are in camera space (y down) but `pred_global_rots` are in the body model's y-up frame. Flip the positions, leave the rotations. `tools/sam3d/check_bvh.py` rebuilds positions from a BVH: 11.5 mm mean error on the sample clip (worst 82 mm at fingertips: MHR bone stretch).
 - Tested on the PC with GVHMR's sample video through `server.run_job`. Untested from the phone (needs app build 057b3b19, already built). About 40 s of model loading per take, then roughly 3 frames a second.
 - GVHMR stays installed (`tools/gvhmr`); it only lacks `SMPLX_NEUTRAL.npz`.
+- Speed on the RTX 5080: about 10 s to load the model, YOLO 15 ms a frame, SAM 3D Body 166 ms a frame body-only (the default) or 664 ms with the hand pass (the phone's HANDS button sends `&hands=1`). bfloat16 autocast fails (a sparse op), so it runs in float32.
+- `FOOT_LOCK` in `run_take.py` shifts the root while a foot (`l_ball` / `r_ball`) is planted: sliding 140 to 93 mm/s on the sample clip, joint rotations untouched.
+- `tools/blender_import_take.py` imports the newest take into Blender with the right axes, scale and frame rate. Tested headless in Blender 4.4: 127 bones, feet on the floor, positions matching the PC's to a centimetre.
 
 ### The handbook (added 14 November 2026)
 
