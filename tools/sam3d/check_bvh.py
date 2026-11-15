@@ -51,7 +51,10 @@ if __name__ == "__main__":
     rebuilt = positions(parents, offsets, motion)
     lines = open(sys.argv[2]).read().split("\n")
     file_parents = [int(p) for p in lines[1].split()]
-    expected = np.array([[float(v) for v in l.split()] for l in lines[2:] if l.strip()]).reshape(len(motion), -1, 3)
+    rows = [[float(v) for v in l.split()] for l in lines[2:] if l.strip()]
+    step = max(1, round(len(motion) / len(rows)))   # the phone's file may keep only every other frame
+    expected = np.array(rows).reshape(len(rows), -1, 3)
+    rebuilt = rebuilt[::step][:len(rows)]
     # The BVH writes joints depth first; map them back to the file's order through the parent lists.
     order, kids = [], {}
     for j, p in enumerate(file_parents):
@@ -62,4 +65,4 @@ if __name__ == "__main__":
             walk(c)
     walk(kids[-1][0])
     error = np.linalg.norm(rebuilt - expected[:, order], axis=2)
-    print(f"{len(parents)} joints, {len(motion)} frames: mean error {error.mean() * 1000:.1f} mm, worst {error.max() * 1000:.1f} mm")
+    print(f"{len(parents)} joints, {len(motion)} frames (checked every {step}): mean error {error.mean() * 1000:.1f} mm, worst {error.max() * 1000:.1f} mm")

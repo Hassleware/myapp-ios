@@ -1,7 +1,10 @@
 """Runs SAM 3D Body (Meta, 2026) on one take's video and writes what the mocap game needs. Runs inside WSL, in the
 sam3d environment, from ~/sam-3d-body (backends/mocap/server.py starts it):
 
-    python run_take.py <video.mp4> <output prefix>
+    python run_take.py <video.mp4> <output prefix> [hands]
+
+"hands" adds SAM 3D Body's second, hand-only pass: finer fingers, about four times slower (on an RTX 5080, about
+0.7 s a frame against 0.17 s). Without it the hands still come from the body pass, just less precisely.
 
 Writes <prefix>-sam3d.bvh (the motion on the MHR skeleton, for Blender) and <prefix>-sam3d.txt (joint positions for
 the phone's replay). Prints "STAGE ..." lines as it goes.
@@ -77,6 +80,7 @@ def orthonormal(rotations):
 
 def main():
     video, prefix = sys.argv[1], sys.argv[2]
+    hands = len(sys.argv) > 3 and sys.argv[3] == "hands"
     sys.path.insert(0, ".")   # SAM 3D Body's own code, from the folder this runs in
     stage("loading SAM 3D Body")
     from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
@@ -112,7 +116,8 @@ def main():
         previous = box
         focal = FOCAL_MM / 43.27 * np.hypot(width, height)   # full-frame equivalent, measured on the diagonal
         cam = torch.tensor([[[focal, 0, width / 2], [0, focal, height / 2], [0, 0, 1]]], dtype=torch.float32)
-        out = estimator.process_one_image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), bboxes=box[None], cam_int=cam)
+        out = estimator.process_one_image(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), bboxes=box[None], cam_int=cam,
+                                          inference_type="full" if hands else "body")
         if not out:
             if positions:
                 positions.append(positions[-1]), rotations.append(rotations[-1])

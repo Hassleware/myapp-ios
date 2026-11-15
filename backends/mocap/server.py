@@ -131,7 +131,7 @@ def set_status(name, **fields):
     (CAPTURES / f"{name}.job.json").write_text(json.dumps(fields))
 
 
-def run_job(name):
+def run_job(name, hands=False):
     """Runs in its own thread: ffmpeg makes the video upright at 30 frames a second, then GVHMR runs in WSL."""
     raw, upright = CAPTURES / f"{name}.mov", CAPTURES / f"{name}.mp4"
     try:
@@ -140,7 +140,7 @@ def run_job(name):
                         "-pix_fmt", "yuv420p", str(upright)], check=True, capture_output=True)
         # SAM 3D Body (tools/sam3d). GVHMR (tools/gvhmr) also works once its SMPL-X body model is downloaded.
         command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate sam3d && cd ~/sam-3d-body && "
-                   f"python '{wsl_path(REPO / 'tools/sam3d/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'")
+                   f"python '{wsl_path(REPO / 'tools/sam3d/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'" + (" hands" if hands else ""))
         process = subprocess.Popen(["wsl", "-d", "Ubuntu", "--", "bash", "-lc", command], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         tail = []
@@ -170,7 +170,8 @@ def handle(method, path, query, body, headers):
         CAPTURES.mkdir(exist_ok=True)
         (CAPTURES / f"{name}.mov").write_bytes(body.encode("utf-8") if isinstance(body, str) else body)
         set_status(name, state="queued", stage="queued")
-        threading.Thread(target=run_job, args=(name,), daemon=True).start()
+        hands = (query.get("hands") or ["0"])[0] == "1"   # the phone's HANDS button: finer fingers, four times slower
+        threading.Thread(target=run_job, args=(name, hands), daemon=True).start()
         return 202, json.dumps({"ok": True})
     if method == "GET" and path == "/job":
         status = CAPTURES / f"{take_name(query)}.job.json"

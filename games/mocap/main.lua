@@ -11,6 +11,7 @@ local state = "idle"          -- idle, countdown, recording, sending, processing
 local countdown, record_start = 0, 0
 local status = ""
 local takes = math.floor(save.get("takes", 0))
+local hands = save.get("hands", "false") == "true"   -- saved as text. HANDS: the PC's slower pass with finer fingers
 local pose, parents, tracked = {}, {}, false
 local result, showing_result, result_start = nil, false, 0   -- the PC's result: { fps, parents, frames }
 local buttons
@@ -86,7 +87,7 @@ local function send()
     end
     if not video then state, status = "idle", "No video for this take, so only the ARKit .bvh is saved." return end
     status = string.format("Sending the video (%.1f MB)...", #video / 1e6)
-    net.backend({ path = "/video?name=" .. name, method = "POST", body = video, timeout = 120 }, function(code, body, err)
+    net.backend({ path = "/video?name=" .. name .. (hands and "&hands=1" or ""), method = "POST", body = video, timeout = 120 }, function(code, body, err)
       if err or code ~= 202 then state, status = "idle", "Video FAILED: " .. tostring(err or body) return end
       state, status = "processing", "Video received. SAM 3D Body is starting on the PC..."
       watch(name)
@@ -108,7 +109,11 @@ buttons = {
   { label = function() return showing_result and "LIVE" or "REPLAY" end, run = function()
       if result then showing_result, result_start = not showing_result, sys.real_time() end
     end },
-  { label = function() return "CAMERA" end, run = begin_camera },
+  { label = function() return hands and "HANDS ON" or "HANDS OFF" end, run = function()
+      hands = not hands
+      save.set("hands", tostring(hands))
+      status = hands and "Finer fingers on the PC: about 4x slower." or "Fast: hands come from the body pass."
+    end },
 }
 
 function init()
