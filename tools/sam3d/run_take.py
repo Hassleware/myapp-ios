@@ -189,8 +189,15 @@ def main():
         raise RuntimeError("no person was found in the video")
 
     stage("smoothing and writing the BVH")
-    positions = smooth(np.stack(positions))
+    raw = np.stack(positions)
+    positions = smooth(raw)
     rotations = orthonormal(smooth(np.stack(rotations)))
+    if len(raw) > 3:   # how much shake the smoothing removed, and what it cost: for tuning SMOOTH
+        shake = lambda p: np.linalg.norm(np.diff(p, 2, axis=0), axis=2).mean() * fps * fps
+        print(f"jitter (mean joint acceleration): {shake(raw):.1f} m/s2 raw, {shake(positions):.1f} smoothed; "
+              f"smoothing moved joints {np.linalg.norm(positions - raw, axis=2).mean() * 1000:.1f} mm on average", flush=True)
+        # A One Euro filter (fast-adapting, zero-phase) was tried on 15 November 2026 and lost to this average on
+        # both counts at every setting, so it isn't here.
     frames, count = positions.shape[:2]
     parents = skeleton_parents(model)[:count]
     names = joint_names(model, count)
