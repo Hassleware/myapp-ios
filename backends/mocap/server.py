@@ -1,4 +1,11 @@
-"""The mocap game's backend: turns a take recorded on the phone into a .bvh file for Blender.
+"""The mocap game's backend: turns takes recorded on the phone into .bvh files for Blender.
+
+Two kinds of take arrive from the phone:
+  * POST /take?name=walk   ARKit's own skeleton, converted here at once to captures/walk.bvh
+  * POST /video?name=walk  the take's video. GVHMR (a stronger model, on this PC's graphics card, in WSL) turns it
+                           into captures/walk-gvhmr.bvh in the background. The phone asks GET /job?name=walk for
+                           progress and fetches GET /result?name=walk (joint positions) to replay it.
+GVHMR is installed by tools/gvhmr/install.sh; tools/gvhmr/run_take.py is what runs for each video.
 
 The phone sends   POST /take?name=walk   with the recording as text (see ios/bodytrack.mm for the format).
 This writes      captures/walk.bvh   in the repo (git ignores the folder) and answers with where it went.
@@ -11,9 +18,12 @@ Change anything here and save: the next take uses the new code, with no app buil
 import json
 import math
 import re
+import subprocess
+import threading
 from pathlib import Path
 
-CAPTURES = Path(__file__).resolve().parents[2] / "captures"
+REPO = Path(__file__).resolve().parents[2]
+CAPTURES = REPO / "captures"
 FPS = 60
 
 
@@ -109,9 +119,67 @@ def to_bvh(joints, frames):
     return "\n".join(out) + "\n", ticks, duration
 
 
+# ---------------------------------------------------------------- GVHMR jobs
+
+def wsl_path(path):
+    """C:/Users/... as WSL sees it: /mnt/c/Users/..."""
+    p = Path(path).resolve().as_posix()
+    return "/mnt/" + p[0].lower() + p[2:]
+
+
+def set_status(name, **fields):
+    (CAPTURES / f"{name}.job.json").write_text(json.dumps(fields))
+
+
+def run_job(name):
+    """Runs in its own thread: ffmpeg makes the video upright at 30 frames a second, then GVHMR runs in WSL."""
+    raw, upright = CAPTURES / f"{name}.mov", CAPTURES / f"{name}.mp4"
+    try:
+        set_status(name, state="running", stage="preparing the video")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-r", "30", "-c:v", "libx264", "-crf", "18",
+                        "-pix_fmt", "yuv420p", str(upright)], check=True, capture_output=True)
+        command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate gvhmr && cd ~/GVHMR && "
+                   f"python '{wsl_path(REPO / 'tools/gvhmr/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'")
+        process = subprocess.Popen(["wsl", "-d", "Ubuntu", "--", "bash", "-lc", command], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        tail = []
+        for line in process.stdout:
+            tail = (tail + [line.rstrip()])[-25:]
+            if line.startswith("STAGE "):
+                set_status(name, state="running", stage=line[6:].strip())
+                print(f"  [mocap] {name}: {line[6:].strip()}", flush=True)
+        if process.wait() != 0 or not (CAPTURES / f"{name}-gvhmr.txt").exists():
+            raise RuntimeError("GVHMR stopped:\n" + "\n".join(tail))
+        set_status(name, state="done", stage="done", file=f"captures/{name}-gvhmr.bvh")
+        print(f"  [mocap] saved captures/{name}-gvhmr.bvh", flush=True)
+    except Exception as problem:
+        detail = getattr(problem, "stderr", b"") or b""
+        message = str(problem) + ("\n" + detail.decode(errors="replace") if detail else "")
+        set_status(name, state="failed", stage=message.strip().splitlines()[-1][:200], detail=message[-4000:])
+        print(f"  [mocap] {name} FAILED:\n{message}", flush=True)
+
+
+def take_name(query):
+    return re.sub(r"[^a-z0-9-]", "", (query.get("name") or ["take"])[0].lower())[:40] or "take"
+
+
 def handle(method, path, query, body, headers):
+    if method == "POST" and path == "/video":
+        name = take_name(query)
+        CAPTURES.mkdir(exist_ok=True)
+        (CAPTURES / f"{name}.mov").write_bytes(body.encode("utf-8") if isinstance(body, str) else body)
+        set_status(name, state="queued", stage="queued")
+        threading.Thread(target=run_job, args=(name,), daemon=True).start()
+        return 202, json.dumps({"ok": True})
+    if method == "GET" and path == "/job":
+        status = CAPTURES / f"{take_name(query)}.job.json"
+        return (200, status.read_text()) if status.exists() else (404, json.dumps({"error": "no such job"}))
+    if method == "GET" and path == "/result":
+        result = CAPTURES / f"{take_name(query)}-gvhmr.txt"
+        return (200, result.read_text(), "text/plain") if result.exists() else (404, json.dumps({"error": "not ready"}))
+
     if method == "POST" and path == "/take":
-        name = re.sub(r"[^a-z0-9-]", "", (query.get("name") or ["take"])[0].lower())[:40] or "take"
+        name = take_name(query)
         try:
             joints, frames = parse(body)
             if not frames:

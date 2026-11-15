@@ -1,15 +1,18 @@
--- Motion capture: the iPhone's back camera tracks a body (ARKit), you record a take, and SEND turns it
--- into captures/<name>.bvh on the PC (backends/mocap/server.py), ready for Blender.
+-- Motion capture: the iPhone's back camera tracks a body (ARKit) and records a video at the same time.
+-- SEND saves ARKit's take as captures/<name>.bvh at once, and hands the video to GVHMR on the PC's graphics card,
+-- a stronger model, which writes captures/<name>-gvhmr.bvh. The phone shows the PC's progress, then replays
+-- GVHMR's result (REPLAY switches between that and the live camera).
 -- Prop the phone up about 3 metres away at waist height, or have someone hold it, and keep the whole body in view.
 
 local lib = include("lib.lua")
 
 local started, why_not = false, nil
-local state = "idle"          -- idle, countdown, recording, sending
+local state = "idle"          -- idle, countdown, recording, sending, processing
 local countdown, record_start = 0, 0
 local status = ""
 local takes = math.floor(save.get("takes", 0))
 local pose, parents, tracked = {}, {}, false
+local result, showing_result, result_start = nil, false, 0   -- GVHMR's motion: { fps, parents, frames }
 local buttons
 local CAMERA_ALPHA = 0.2                  -- how strongly the camera picture shows behind the skeleton
 local FLIP_X, FLIP_Y = false, false       -- if the picture comes out mirrored or upside down, flip it here
@@ -19,18 +22,75 @@ local function begin_camera()
   status = started and "Looking for a body..." or why_not
 end
 
+-- "fps 30 joints 22", then the parents, then x y z for every joint, one frame a line.
+local function read_result(text)
+  local lines = {}
+  for line in text:gmatch("[^\n]+") do lines[#lines + 1] = line end
+  local motion = { fps = tonumber(lines[1]:match("fps (%d+)")) or 30, parents = {}, frames = {} }
+  for p in lines[2]:gmatch("%S+") do motion.parents[#motion.parents + 1] = tonumber(p) + 1 end   -- from 1; 0 is none
+  for i = 3, #lines do
+    local frame = {}
+    for v in lines[i]:gmatch("%S+") do frame[#frame + 1] = tonumber(v) end
+    motion.frames[#motion.frames + 1] = frame
+  end
+  return motion
+end
+
+-- Asks the PC how GVHMR is getting on, every 1.5 seconds, until it is done or has failed.
+local function watch(name)
+  lib.run(function()
+    while state == "processing" do
+      local answered = false
+      net.backend({ path = "/job?name=" .. name }, function(code, body, err)
+        answered = true
+        if err or code ~= 200 then status = "PC: " .. tostring(err or body) return end
+        local job, stage = body:match('"state":%s*"(.-)"'), body:match('"stage":%s*"(.-)"') or ""
+        status = "PC (GVHMR): " .. stage
+        if job == "failed" then state = "idle" status = "GVHMR failed: " .. stage .. " (details in the dev.py window)" end
+        if job == "done" then
+          net.backend({ path = "/result?name=" .. name, timeout = 30 }, function(c, text, e)
+            state = "idle"
+            if e or c ~= 200 then status = "Couldn't fetch the result: " .. tostring(e or text) return end
+            result, showing_result, result_start = read_result(text), true, sys.real_time()
+            status = "GVHMR done: captures/" .. name .. "-gvhmr.bvh. Replaying it. REPLAY switches back to live."
+            input.haptic("success")
+          end)
+        end
+      end)
+      lib.wait_until(function() return answered end)
+      lib.wait(1.5)
+    end
+  end)
+end
+
 local function send()
   local text = mocap.take()
   if not text then status = "Nothing recorded yet." return end
   takes = takes + 1
   save.set("takes", takes)
   local name = "take-" .. takes
-  state, status = "sending", "Sending " .. name .. " to the PC..."
-  net.backend({ path = "/take?name=" .. name, method = "POST", body = text, timeout = 60 }, function(code, body, err)
-    state = "idle"
-    if err then status = "FAILED: " .. err return end
-    local file = body:match('"file":%s*"(.-)"')
-    status = file and ("Saved " .. file .. " (" .. (body:match('"seconds":%s*([%d.]+)') or "?") .. " s)") or ("FAILED: " .. body)
+  state, status = "sending", "Sending " .. name .. " (ARKit) to the PC..."
+  lib.run(function()
+    local done = false
+    net.backend({ path = "/take?name=" .. name, method = "POST", body = text, timeout = 60 }, function(code, body, err)
+      done = true
+      status = err and ("ARKit take FAILED: " .. err) or ("ARKit take saved. Sending the video...")
+    end)
+    lib.wait_until(function() return done end)
+    -- The video finishes writing a moment after STOP.
+    local video
+    for _ = 1, 50 do
+      video = mocap.video()
+      if video then break end
+      lib.wait(0.1)
+    end
+    if not video then state, status = "idle", "No video for this take, so no GVHMR. The ARKit .bvh is saved." return end
+    status = string.format("Sending the video (%.1f MB)...", #video / 1e6)
+    net.backend({ path = "/video?name=" .. name, method = "POST", body = video, timeout = 120 }, function(code, body, err)
+      if err or code ~= 202 then state, status = "idle", "Video FAILED: " .. tostring(err or body) return end
+      state, status = "processing", "Video received. GVHMR is starting on the PC..."
+      watch(name)
+    end)
   end)
 end
 
@@ -39,11 +99,15 @@ buttons = {
       if state == "recording" or state == "countdown" then
         mocap.record(false)
         state, status = "idle", string.format("Recorded %d frames. SEND to save it on the PC.", mocap.frames())
-      elseif started then
+      elseif started and state == "idle" then
+        showing_result = false
         state, countdown = "countdown", 3
       end
     end },
   { label = function() return "SEND" end, run = function() if state == "idle" then send() end end },
+  { label = function() return showing_result and "LIVE" or "REPLAY" end, run = function()
+      if result then showing_result, result_start = not showing_result, sys.real_time() end
+    end },
   { label = function() return "CAMERA" end, run = begin_camera },
 }
 
@@ -58,7 +122,7 @@ end
 local function layout()
   local w, h = gfx.size()
   local left, top, right, bottom = gfx.safe()
-  local width = (w - left - right - 80) / #buttons
+  local width = (w - left - right - 90) / #buttons
   for i, b in ipairs(buttons) do
     b.x, b.y, b.w, b.h = left + 30 + (i - 1) * (width + 10), h - bottom - 140, width, 100
   end
@@ -90,6 +154,26 @@ function update(dt)
   end
 end
 
+-- GVHMR's motion, looping, seen from the front and a little above, with a floor.
+local function draw_result()
+  local frames = result.frames
+  local f = frames[math.floor((sys.real_time() - result_start) * result.fps) % #frames + 1]
+  local cx, cz = f[1], f[3]
+  gfx.camera(cx, 1.1, cz + 3.6, cx, 0.85, cz, 45)
+  gfx.unlit(true)
+  for k = -3, 3 do
+    gfx.line(cx + k * 0.5, 0, cz - 1.5, cx + k * 0.5, 0, cz + 1.5, 0.25, 0.28, 0.35, 1, 0.01)
+    gfx.line(cx - 1.5, 0, cz + k * 0.5, cx + 1.5, 0, cz + k * 0.5, 0.25, 0.28, 0.35, 1, 0.01)
+  end
+  for i, parent in ipairs(result.parents) do
+    if parent > 0 then
+      local a, p = (i - 1) * 3, (parent - 1) * 3
+      gfx.line(f[a + 1], f[a + 2], f[a + 3], f[p + 1], f[p + 2], f[p + 3], 1.0, 0.75, 0.3, 1, 0.03)
+    end
+  end
+  gfx.unlit(false)
+end
+
 function draw()
   gfx.clear(0.06, 0.07, 0.10)
   local w, h = gfx.size()
@@ -97,53 +181,57 @@ function draw()
   if not tracked then r, g, b = 0.35, 0.35, 0.4 end
   if state == "recording" then r, g, b = 1.0, 0.35, 0.35 end
 
-  -- The camera picture, faint, filling the width. Where it is on screen, so the joints can be placed on it.
-  local picture, pw, ph = mocap.camera()
-  local iw, ih = w, w * 4 / 3
-  if picture then iw, ih = w, w * ph / pw end
-  local ix, iy = 0, (h - ih) / 2
-  if picture then
-    local u0, u1, v0, v1 = 0, 1, 0, 1
-    if FLIP_X then u0, u1 = 1, 0 end
-    if FLIP_Y then v0, v1 = 1, 0 end
-    gfx.image(picture, ix, iy, iw, ih, 1, 1, 1, CAMERA_ALPHA, u0, v0, u1, v1)
-  end
-
-  local flat = mocap.screen()
-  if flat then
-    -- The skeleton on top of the person: dots along each bone, a bigger dot at each joint.
-    local function at(j)
-      local u, v = flat[(j - 1) * 2 + 1], flat[(j - 1) * 2 + 2]
-      if FLIP_X then u = 1 - u end
-      if FLIP_Y then v = 1 - v end
-      return ix + u * iw, iy + v * ih
-    end
-    for j, parent in ipairs(parents) do
-      if parent > 0 and flat[(j - 1) * 2 + 1] then
-        local x1, y1 = at(j)
-        local x2, y2 = at(parent)
-        local steps = math.max(1, math.floor(math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) / 7))
-        for k = 0, steps do
-          gfx.circle(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps, 3, r, g, b)
-        end
-        gfx.circle(x1, y1, 5, r, g, b)
-      end
-    end
+  if showing_result and result then
+    draw_result()
   else
-    -- No camera (the PC): the skeleton from the front, in metres around the hips.
-    gfx.camera(0, 0.1, 3.2, 0, 0.1, 0, 45)
-    gfx.unlit(true)
-    for i, parent in ipairs(parents) do
-      if parent > 0 then
-        local a, p = (i - 1) * 3, (parent - 1) * 3
-        gfx.line(pose[a + 1], pose[a + 2], pose[a + 3], pose[p + 1], pose[p + 2], pose[p + 3], r, g, b, 1, 0.025)   -- width in metres
-      end
+    -- The camera picture, faint, filling the width. Where it is on screen, so the joints can be placed on it.
+    local picture, pw, ph = mocap.camera()
+    local iw, ih = w, w * 4 / 3
+    if picture then iw, ih = w, w * ph / pw end
+    local ix, iy = 0, (h - ih) / 2
+    if picture then
+      local u0, u1, v0, v1 = 0, 1, 0, 1
+      if FLIP_X then u0, u1 = 1, 0 end
+      if FLIP_Y then v0, v1 = 1, 0 end
+      gfx.image(picture, ix, iy, iw, ih, 1, 1, 1, CAMERA_ALPHA, u0, v0, u1, v1)
     end
-    gfx.unlit(false)
+
+    local flat = mocap.screen()
+    if flat then
+      -- The skeleton on top of the person: dots along each bone, a bigger dot at each joint.
+      local function at(j)
+        local u, v = flat[(j - 1) * 2 + 1], flat[(j - 1) * 2 + 2]
+        if FLIP_X then u = 1 - u end
+        if FLIP_Y then v = 1 - v end
+        return ix + u * iw, iy + v * ih
+      end
+      for j, parent in ipairs(parents) do
+        if parent > 0 and flat[(j - 1) * 2 + 1] then
+          local x1, y1 = at(j)
+          local x2, y2 = at(parent)
+          local steps = math.max(1, math.floor(math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) / 7))
+          for k = 0, steps do
+            gfx.circle(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps, 3, r, g, b)
+          end
+          gfx.circle(x1, y1, 5, r, g, b)
+        end
+      end
+    else
+      -- No camera (the PC): the skeleton from the front, in metres around the hips.
+      gfx.camera(0, 0.1, 3.2, 0, 0.1, 0, 45)
+      gfx.unlit(true)
+      for i, parent in ipairs(parents) do
+        if parent > 0 then
+          local a, p = (i - 1) * 3, (parent - 1) * 3
+          gfx.line(pose[a + 1], pose[a + 2], pose[a + 3], pose[p + 1], pose[p + 2], pose[p + 3], r, g, b, 1, 0.025)   -- width in metres
+        end
+      end
+      gfx.unlit(false)
+    end
   end
 
   local left, top = gfx.safe()
-  gfx.text("MOCAP", left + 80, top + 20, 30, 1, 1, 1)
+  gfx.text(showing_result and "MOCAP  -  GVHMR REPLAY" or "MOCAP", left + 80, top + 20, 30, 1, 1, 1)
   gfx.text("takes saved: " .. takes, left + 80, top + 62, 18, 0.6, 0.65, 0.75)
 
   if state == "countdown" then
@@ -161,10 +249,10 @@ function draw()
     line = line + 1
   end
 
-  for _, b in ipairs(buttons) do
-    local label = b.label()
+  for _, bt in ipairs(buttons) do
+    local label = bt.label()
     local red = label == "STOP"
-    gfx.rect(b.x, b.y, b.w, b.h, red and 0.75 or 0.2, red and 0.2 or 0.45, red and 0.25 or 0.85)
-    gfx.text(label, b.x + (b.w - gfx.text_width(label, 26)) / 2, b.y + 37, 26, 1, 1, 1)
+    gfx.rect(bt.x, bt.y, bt.w, bt.h, red and 0.75 or 0.2, red and 0.2 or 0.45, red and 0.25 or 0.85)
+    gfx.text(label, bt.x + (bt.w - gfx.text_width(label, 24)) / 2, bt.y + 38, 24, 1, 1, 1)
   end
 end

@@ -117,6 +117,13 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - The screen shows the camera picture at 20% behind the skeleton: `bodytrack.mm` turns each ARKit frame upright and shrinks it to 270 x 360 RGBA on the CPU, and projects each joint onto it with `ARCamera projectPoint` (portrait). `mocap.camera()` keeps one texture and refreshes it with `gfx::update_texture` (new: re-uploads pixels into a no-mip texture after `vkQueueWaitIdle`). `FLIP_X` / `FLIP_Y` in the game fix a mirrored or upside-down picture without a build. `GAMELAB_FAKE_CAMERA=1` gives the PC a moving test picture.
 - **Untested on the phone.** Tested on the PC: the screen, recording flow and sending with a stand-in skeleton, a real `.bvh` written through `dev.py`, and the quaternion-to-Euler round trip. Biggest unknown: camera permission inside LiveContainer.
 
+### GVHMR on the PC (added 15 November 2026)
+
+- The mocap game also records an H.264 video (`AVAssetWriter` in `bodytrack.mm`, 30 fps, `mocap.video()`), uploads it with `net.backend` (backend uploads up to 256 MB), and `backends/mocap/server.py` runs `tools/gvhmr/run_take.py` in **WSL Ubuntu** (`~/GVHMR`, conda env `gvhmr`, PyTorch 2.10 + PyTorch3D cuda130 build: the only recipe that runs on the RTX 5080, from GVHMR issue #88). Jobs are tracked in `captures/<name>.job.json` so a backend reload does not lose them. The phone polls `/job` and fetches `/result` (22 SMPL-X joint positions per frame) to replay.
+- `dev.py` now passes a backend upload as `bytes` when it isn't UTF-8 text (it used to decode everything, which corrupted video).
+- Weights: GVHMR's Google Drive hit its quota, so gvhmr/hmr2/vitpose came from the Hugging Face mirror `ryanrudes/gvhmr` after `tools/gvhmr/scan_checkpoint.py` (static pickle scan; verified to refuse an `os.system` trap) passed them; YOLO is Ultralytics' official v8.3.0 release.
+- **Status:** tested on the PC up to GVHMR's model: ffmpeg, WSL launch, YOLO, ViTPose-H and features all ran on the RTX 5080 with GVHMR's sample video. It stops at `SMPLX_NEUTRAL.npz`, which the user must download (licence-gated) into `tools/.bin/body_models/smplx/`. Untested: the BVH export, the phone's video recording, upload, and replay. Non-commercial licences (GVHMR weights, SMPL-X).
+
 ### The handbook (added 14 November 2026)
 
 - `python tools/dev.py docs` serves it on port 8766 with live rebuild; `docs` at the prompt does the same in the background. It needs `pip install mkdocs-material`, the one non-standard-library dependency in the repo, and only for the handbook.

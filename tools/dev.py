@@ -330,7 +330,11 @@ class Handler(BaseHTTPRequestHandler):
         parts = url.path.split("/")
         game, path = parts[2] if len(parts) > 2 else "", "/" + "/".join(parts[3:])
         length = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        body = self.rfile.read(length) if length else b""
+        try:
+            body = body.decode("utf-8")   # text (JSON) as a str; anything else, such as a video, stays bytes
+        except UnicodeDecodeError:
+            pass
         try:
             with _backend_lock:
                 module = backend_module(game)

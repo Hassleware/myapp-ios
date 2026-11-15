@@ -109,7 +109,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   endif()
   target_link_libraries(gamelab PRIVATE ${MOLTENVK_LIB}
     "-framework Metal" "-framework QuartzCore" "-framework IOSurface" "-framework Foundation"
-    "-framework UIKit" "-framework CoreGraphics" "-framework ARKit" "-lc++")
+    "-framework UIKit" "-framework CoreGraphics" "-framework ARKit" "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo" "-lc++")
 
   # Only the loader talks to the PC and shows its files in the Files app.
   set(IOS_LOADER_KEYS "")

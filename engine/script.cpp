@@ -1155,6 +1155,16 @@ int l_mocap_screen(lua_State* l) {
     return 1;
 }
 
+// mocap.video() -> the take's video (.mp4 bytes), or nil until it has finished writing (a moment after STOP)
+int l_mocap_video(lua_State* l) {
+    size_t size = 0;
+    char* bytes = gamelab_mocap_video(&size);
+    if (!bytes) return 0;
+    lua_pushlstring(l, bytes, size);
+    free(bytes);
+    return 1;
+}
+
 int l_mocap_take(lua_State* l) {
     size_t size = 0;
     char* text = gamelab_mocap_take(&size);
@@ -1288,7 +1298,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
     const luaL_Reg netFunctions[] = {{"request", l_net_request}, {"backend", l_net_backend}, {nullptr, nullptr}};
     const luaL_Reg mocapFunctions[] = {{"start", l_mocap_start}, {"stop", l_mocap_stop}, {"pose", l_mocap_pose}, {"record", l_mocap_record},
                                        {"frames", l_mocap_frames}, {"take", l_mocap_take}, {"camera", l_mocap_camera},
-                                       {"screen", l_mocap_screen}, {nullptr, nullptr}};
+                                       {"screen", l_mocap_screen}, {"video", l_mocap_video}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
                                      {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};

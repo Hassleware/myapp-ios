@@ -450,6 +450,10 @@ function mocap.camera() end
 --- Where each joint appears on that picture, from 0 to 1 across and down, in the same order as mocap.pose. Nothing while no body is tracked.
 function mocap.screen() end
 
+--- `mocap.video() -> bytes | nil`
+--- The take's video as an .mp4, once it has finished writing (a moment after recording stops); nil until then. Send it with net.backend.
+function mocap.video() end
+
 --- `mocap.record(on)`
 --- true starts a new take, false ends it.
 function mocap.record(on) end

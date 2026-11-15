@@ -2,6 +2,7 @@
 // as text that backends/<game>/server.py turns into a .bvh file Blender can import.
 // Needs an A12 chip or newer (iPhone XS / XR and later). Declared for C++ in engine/mocap.h.
 #import <ARKit/ARKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include <algorithm>
@@ -24,6 +25,55 @@ static const int CAMERA_W = 270, CAMERA_H = 360;
 static std::vector<unsigned char> cameraPixels;
 static int cameraSerial = 0;
 static std::vector<float> screenPoints;   // x, y per joint, 0 to 1 across and down the upright picture
+// The take's video, for the PC's GVHMR. H.264 at 30 frames a second, written while recording.
+static AVAssetWriter* videoWriter;
+static AVAssetWriterInput* videoInput;
+static AVAssetWriterInputPixelBufferAdaptor* videoAdaptor;
+static double lastVideoFrame = -1;
+static bool videoReady = false;
+
+static NSString* video_path() { return [NSTemporaryDirectory() stringByAppendingPathComponent:@"take.mp4"]; }
+
+// Called with the lock held, on the main thread, from the frame callback.
+static void video_frame(ARFrame* frame) {
+    CVPixelBufferRef image = frame.capturedImage;
+    if (!videoWriter) {
+        NSURL* url = [NSURL fileURLWithPath:video_path()];
+        [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
+        videoWriter = [[AVAssetWriter alloc] initWithURL:url fileType:AVFileTypeMPEG4 error:nil];
+        NSDictionary* settings = @{
+            AVVideoCodecKey : AVVideoCodecTypeH264,
+            AVVideoWidthKey : @(CVPixelBufferGetWidth(image)),
+            AVVideoHeightKey : @(CVPixelBufferGetHeight(image)),
+            AVVideoCompressionPropertiesKey : @{AVVideoAverageBitRateKey : @6000000, AVVideoExpectedSourceFrameRateKey : @30},
+        };
+        videoInput = [[AVAssetWriterInput alloc] initWithMediaType:AVMediaTypeVideo outputSettings:settings];
+        videoInput.expectsMediaDataInRealTime = YES;
+        videoInput.transform = CGAffineTransformMakeRotation(M_PI_2);   // the sensor is landscape; the phone is upright
+        videoAdaptor = [[AVAssetWriterInputPixelBufferAdaptor alloc] initWithAssetWriterInput:videoInput sourcePixelBufferAttributes:nil];
+        if (!videoWriter || ![videoWriter canAddInput:videoInput]) {
+            videoWriter = nil;
+            return;
+        }
+        [videoWriter addInput:videoInput];
+        [videoWriter startWriting];
+        [videoWriter startSessionAtSourceTime:CMTimeMakeWithSeconds(frame.timestamp, 600)];
+        lastVideoFrame = -1;
+    }
+    if (frame.timestamp - lastVideoFrame < 1.0 / 30 - 0.004 || !videoInput.readyForMoreMediaData) return;   // 30 a second
+    if ([videoAdaptor appendPixelBuffer:image withPresentationTime:CMTimeMakeWithSeconds(frame.timestamp, 600)]) lastVideoFrame = frame.timestamp;
+}
+
+static void video_finish() {
+    if (!videoWriter) return;
+    AVAssetWriter* writer = videoWriter;
+    videoWriter = nil;
+    [videoInput markAsFinished];
+    [writer finishWritingWithCompletionHandler:^{
+        std::lock_guard<std::mutex> guard(lock);
+        videoReady = writer.status == AVAssetWriterStatusCompleted;
+    }];
+}
 
 static void append(std::string& out, float v) {
     char text[24];
@@ -133,6 +183,7 @@ static void append(std::string& out, float v) {
     cameraPixels.swap(out);
     cameraSerial++;
     screenPoints.swap(points);
+    if (recording) video_frame(frame);
 }
 
 - (void)session:(ARSession*)session didAddAnchors:(NSArray<__kindof ARAnchor*>*)anchors { [self use:anchors]; }
@@ -169,6 +220,7 @@ extern "C" int gamelab_mocap_start(char* error, size_t size) {
 extern "C" void gamelab_mocap_stop(void) {
     [session pause];
     std::lock_guard<std::mutex> guard(lock);
+    if (recording) video_finish();
     recording = false;
     tracked = false;
     cameraPixels.clear();
@@ -194,8 +246,23 @@ extern "C" void gamelab_mocap_record(int on) {
     if (on && !recording) {
         take.clear();
         frameCount = 0;
+        videoReady = false;
     }
+    if (!on && recording) video_finish();
     recording = on != 0;
+}
+
+extern "C" char* gamelab_mocap_video(size_t* size) {
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        if (!videoReady) return nullptr;
+    }
+    NSData* data = [NSData dataWithContentsOfFile:video_path()];
+    if (!data.length) return nullptr;
+    *size = data.length;
+    char* copy = (char*)malloc(data.length);
+    memcpy(copy, data.bytes, data.length);
+    return copy;
 }
 
 extern "C" int gamelab_mocap_frames(void) {

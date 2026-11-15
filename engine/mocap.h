@@ -17,6 +17,7 @@ int gamelab_mocap_pose(float* positions, int* parents, int maxJoints, int* joint
 void gamelab_mocap_record(int on);                   // turning it on starts a new take
 int gamelab_mocap_frames(void);                      // frames in the current take
 char* gamelab_mocap_take(size_t* size);              // the take as text (malloc'd; free it), or null
+char* gamelab_mocap_video(size_t* size);             // the take's video as an .mp4 (malloc'd), once finished, or null
 // The camera picture, upright and small, as RGBA. serial changes with each new picture. 1 if there is one.
 int gamelab_mocap_camera(unsigned char* rgba, int maxBytes, int* w, int* h, int* serial);
 // Each joint on that picture, 0 to 1 across and down (x, y pairs). Returns the joint count, 0 while untracked.
@@ -32,6 +33,7 @@ inline int gamelab_mocap_pose(float*, int*, int, int* jointCount, char* error, s
 inline void gamelab_mocap_record(int) {}
 inline int gamelab_mocap_frames(void) { return 0; }
 inline char* gamelab_mocap_take(size_t*) { return nullptr; }
+inline char* gamelab_mocap_video(size_t*) { return nullptr; }
 // With GAMELAB_FAKE_CAMERA=1 set, the PC shows a moving test picture, so the mocap screen can be worked on here.
 inline int gamelab_mocap_camera(unsigned char* rgba, int maxBytes, int* w, int* h, int* serial) {
     static int frame = 0;

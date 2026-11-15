@@ -12,6 +12,29 @@ Game Lab can record a person's movement with the iPhone's back camera and turn i
 
 In Blender: **File > Import > Motion Capture (.bvh)**, scale 1 (one unit is a metre), forward **-Z**, up **Y**. Then retarget the motion onto your armature, for example with Rokoko's free Blender add-on, and export your character as `.glb` with its animations (see [Models and animation](models.md)).
 
+## GVHMR: a stronger model on the PC
+
+While recording, the phone also films the take (H.264, 30 frames a second). SEND uploads the video too, and the PC runs **GVHMR** (world-grounded human motion recovery, SIGGRAPH Asia 2024) on its graphics card. GVHMR is more accurate than ARKit at depth and keeps feet planted. The phone shows the PC's progress, then replays GVHMR's result (**REPLAY** switches between that and the live camera). The result is saved as `captures/<name>-gvhmr.bvh`.
+
+| Step | Where |
+|---|---|
+| The phone writes the video | `ios/bodytrack.mm` (`AVAssetWriter`); `mocap.video()` hands it to Lua |
+| The PC receives it, makes it upright at 30 fps (ffmpeg), runs GVHMR, tracks the job | `backends/mocap/server.py` (`/video`, `/job`, `/result`) |
+| GVHMR itself, without its video renders, then the `.bvh` and the phone's joint file | `tools/gvhmr/run_take.py`, run in WSL Ubuntu |
+| Installing GVHMR (Miniforge, PyTorch 2.10 for RTX 50 cards, PyTorch3D, the weights) | `tools/gvhmr/install.sh` |
+| Checking downloaded model files can't run code when loaded | `tools/gvhmr/scan_checkpoint.py` |
+
+### Setting it up on a new PC
+
+1. Windows with an NVIDIA card and WSL Ubuntu.
+2. `wsl -d Ubuntu -- bash /mnt/c/<path to repo>/tools/gvhmr/install.sh`
+3. The body model, which needs a free account: register at smpl-x.is.tue.mpg.de, download **SMPL-X v1.1 (NPZ+PKL)**, and put `SMPLX_NEUTRAL.npz` in the repo's `tools/.bin/body_models/smplx/` (git ignores `tools/.bin`; the licence forbids sharing the file). Run the install script again to copy it in.
+
+!!! warning "Licences"
+    GVHMR's weights and the SMPL-X body model are for **non-commercial research**. Motion made this way is fine for learning and prototypes; a game you sell needs a commercial licence (Meshcapade sells SMPL-X licences) or a different model.
+
+The model weights came from a Hugging Face mirror because GVHMR's Google Drive was over its download limit. Each file was checked with `scan_checkpoint.py` before use; YOLO came from Ultralytics' own release.
+
 ## How it fits together
 
 | Part | Where | Changes need |
