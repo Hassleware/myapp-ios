@@ -1119,6 +1119,42 @@ int l_mocap_frames(lua_State* l) {
 }
 
 // mocap.take() -> the recording as text (send it with net.backend), or nil
+// mocap.camera() -> texture, width, height: the back camera's picture, upright, refreshed each frame. Nothing without one.
+uint32_t cameraTexture = 0;
+int cameraW = 0, cameraH = 0, cameraSerial = -1;
+
+int l_mocap_camera(lua_State* l) {
+    static std::vector<uint8_t> pixels(512 * 512 * 4);
+    int w = 0, h = 0, serial = 0;
+    if (!gamelab_mocap_camera(pixels.data(), (int)pixels.size(), &w, &h, &serial)) return 0;
+    if (serial != cameraSerial) {
+        cameraSerial = serial;
+        if (!cameraTexture || w != cameraW || h != cameraH || !gfx::update_texture(cameraTexture, pixels.data())) {
+            if (cameraTexture) gfx::free_texture(cameraTexture);
+            cameraTexture = gfx::new_texture(w, h, pixels.data(), gfx::TEX_NOMIP | gfx::TEX_CLAMP, true);
+            cameraW = w;
+            cameraH = h;
+        }
+    }
+    lua_pushinteger(l, cameraTexture);
+    lua_pushinteger(l, cameraW);
+    lua_pushinteger(l, cameraH);
+    return 3;
+}
+
+// mocap.screen() -> {x, y, x, y, ...}: each joint on the camera picture, 0 to 1 across and down. Nothing while untracked.
+int l_mocap_screen(lua_State* l) {
+    static float points[256 * 2];
+    int count = gamelab_mocap_screen(points, 256);
+    if (count <= 0) return 0;
+    lua_createtable(l, count * 2, 0);
+    for (int i = 0; i < count * 2; i++) {
+        lua_pushnumber(l, points[i]);
+        lua_rawseti(l, -2, i + 1);
+    }
+    return 1;
+}
+
 int l_mocap_take(lua_State* l) {
     size_t size = 0;
     char* text = gamelab_mocap_take(&size);
@@ -1251,7 +1287,8 @@ bool load(const std::string& dir, const std::string& saveFile) {
                                        {nullptr, nullptr}};
     const luaL_Reg netFunctions[] = {{"request", l_net_request}, {"backend", l_net_backend}, {nullptr, nullptr}};
     const luaL_Reg mocapFunctions[] = {{"start", l_mocap_start}, {"stop", l_mocap_stop}, {"pose", l_mocap_pose}, {"record", l_mocap_record},
-                                       {"frames", l_mocap_frames}, {"take", l_mocap_take}, {nullptr, nullptr}};
+                                       {"frames", l_mocap_frames}, {"take", l_mocap_take}, {"camera", l_mocap_camera},
+                                       {"screen", l_mocap_screen}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
                                      {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};
@@ -1298,6 +1335,8 @@ void unload() {
     saves.clear();
     netCallbacks.clear();   // answers still on their way are dropped when they arrive
     gamelab_mocap_stop();   // the camera goes off when the game does
+    cameraTexture = 0;      // freed with the game's other textures
+    cameraSerial = -1;
     input::keyboard(false);
     input::set_controls({});
     collide::clear();

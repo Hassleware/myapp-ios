@@ -11,6 +11,8 @@ local status = ""
 local takes = math.floor(save.get("takes", 0))
 local pose, parents, tracked = {}, {}, false
 local buttons
+local CAMERA_ALPHA = 0.2                  -- how strongly the camera picture shows behind the skeleton
+local FLIP_X, FLIP_Y = false, false       -- if the picture comes out mirrored or upside down, flip it here
 
 local function begin_camera()
   started, why_not = mocap.start()
@@ -90,22 +92,56 @@ end
 
 function draw()
   gfx.clear(0.06, 0.07, 0.10)
-
-  -- The skeleton as the phone sees it, from the front. Positions are metres around the hips.
-  gfx.camera(0, 0.1, 3.2, 0, 0.1, 0, 45)
-  gfx.unlit(true)
+  local w, h = gfx.size()
   local r, g, b = 0.4, 0.9, 1.0
   if not tracked then r, g, b = 0.35, 0.35, 0.4 end
   if state == "recording" then r, g, b = 1.0, 0.35, 0.35 end
-  for i, parent in ipairs(parents) do
-    if parent > 0 then
-      local a, p = (i - 1) * 3, (parent - 1) * 3
-      gfx.line(pose[a + 1], pose[a + 2], pose[a + 3], pose[p + 1], pose[p + 2], pose[p + 3], r, g, b, 1, 0.025)   -- width in metres
-    end
-  end
-  gfx.unlit(false)
 
-  local w, h = gfx.size()
+  -- The camera picture, faint, filling the width. Where it is on screen, so the joints can be placed on it.
+  local picture, pw, ph = mocap.camera()
+  local iw, ih = w, w * 4 / 3
+  if picture then iw, ih = w, w * ph / pw end
+  local ix, iy = 0, (h - ih) / 2
+  if picture then
+    local u0, u1, v0, v1 = 0, 1, 0, 1
+    if FLIP_X then u0, u1 = 1, 0 end
+    if FLIP_Y then v0, v1 = 1, 0 end
+    gfx.image(picture, ix, iy, iw, ih, 1, 1, 1, CAMERA_ALPHA, u0, v0, u1, v1)
+  end
+
+  local flat = mocap.screen()
+  if flat then
+    -- The skeleton on top of the person: dots along each bone, a bigger dot at each joint.
+    local function at(j)
+      local u, v = flat[(j - 1) * 2 + 1], flat[(j - 1) * 2 + 2]
+      if FLIP_X then u = 1 - u end
+      if FLIP_Y then v = 1 - v end
+      return ix + u * iw, iy + v * ih
+    end
+    for j, parent in ipairs(parents) do
+      if parent > 0 and flat[(j - 1) * 2 + 1] then
+        local x1, y1 = at(j)
+        local x2, y2 = at(parent)
+        local steps = math.max(1, math.floor(math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) / 7))
+        for k = 0, steps do
+          gfx.circle(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps, 3, r, g, b)
+        end
+        gfx.circle(x1, y1, 5, r, g, b)
+      end
+    end
+  else
+    -- No camera (the PC): the skeleton from the front, in metres around the hips.
+    gfx.camera(0, 0.1, 3.2, 0, 0.1, 0, 45)
+    gfx.unlit(true)
+    for i, parent in ipairs(parents) do
+      if parent > 0 then
+        local a, p = (i - 1) * 3, (parent - 1) * 3
+        gfx.line(pose[a + 1], pose[a + 2], pose[a + 3], pose[p + 1], pose[p + 2], pose[p + 3], r, g, b, 1, 0.025)   -- width in metres
+      end
+    end
+    gfx.unlit(false)
+  end
+
   local left, top = gfx.safe()
   gfx.text("MOCAP", left + 80, top + 20, 30, 1, 1, 1)
   gfx.text("takes saved: " .. takes, left + 80, top + 62, 18, 0.6, 0.65, 0.75)

@@ -6,7 +6,7 @@ Game Lab can record a person's movement with the iPhone's back camera and turn i
 
 1. Keep `python tools/dev.py` running on the PC.
 2. On the phone, open the **mocap** game. The first time, iOS asks for the camera.
-3. Prop the phone up about 3 metres away at waist height, or have someone hold it, with the whole body in view. The skeleton turns blue when a body is tracked.
+3. Prop the phone up about 3 metres away at waist height, or have someone hold it, with the whole body in view. It uses the **back** camera (ARKit only tracks bodies with that one). The camera picture shows faintly behind the skeleton (`CAMERA_ALPHA` in `main.lua`), and the skeleton turns blue on the person when they are tracked.
 4. Tap **RECORD**. After a 3-second countdown, perform. Tap **STOP**.
 5. Tap **SEND**. The take arrives as `captures/take-N.bvh` in the repository (git ignores the folder), and `dev.py` prints where it went.
 

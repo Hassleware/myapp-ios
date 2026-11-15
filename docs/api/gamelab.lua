@@ -442,6 +442,14 @@ function mocap.stop() end
 --- The latest skeleton: positions holds x, y, z for each joint in metres around the hips (y up); parents gives each joint's parent, counting from 1, with 0 for the root. Draw a line from each joint to its parent to see the body.
 function mocap.pose() end
 
+--- `mocap.camera() -> texture, width, height`
+--- The back camera's picture, upright and small (270 x 360), refreshed every frame; draw it with gfx.image. Nothing until the camera is running. On the PC, GAMELAB_FAKE_CAMERA=1 gives a moving test picture.
+function mocap.camera() end
+
+--- `mocap.screen() -> { x, y, x, y, ... }`
+--- Where each joint appears on that picture, from 0 to 1 across and down, in the same order as mocap.pose. Nothing while no body is tracked.
+function mocap.screen() end
+
 --- `mocap.record(on)`
 --- true starts a new take, false ends it.
 function mocap.record(on) end

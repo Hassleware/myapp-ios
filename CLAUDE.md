@@ -114,6 +114,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 ### Motion capture (added 15 November 2026)
 
 - `games/mocap` records a take with ARKit body tracking (`ios/bodytrack.mm`), sends the raw take with `net.backend` (backend uploads may be up to 64 MB; `net.request` stays at 1 MB), and `backends/mocap/server.py` writes `captures/<name>.bvh` (git-ignored). The take format: a header of joint name, parent and local offset (measured at the first recorded frame), then per frame the time, the body's room position and turn, and every joint's local rotation quaternion. BVH channels are ZXY Euler; the converter resamples to 60 fps by nearest frame. `NSCameraUsageDescription` is in the loader's Info.plist keys.
+- The screen shows the camera picture at 20% behind the skeleton: `bodytrack.mm` turns each ARKit frame upright and shrinks it to 270 x 360 RGBA on the CPU, and projects each joint onto it with `ARCamera projectPoint` (portrait). `mocap.camera()` keeps one texture and refreshes it with `gfx::update_texture` (new: re-uploads pixels into a no-mip texture after `vkQueueWaitIdle`). `FLIP_X` / `FLIP_Y` in the game fix a mirrored or upside-down picture without a build. `GAMELAB_FAKE_CAMERA=1` gives the PC a moving test picture.
 - **Untested on the phone.** Tested on the PC: the screen, recording flow and sending with a stand-in skeleton, a real `.bvh` written through `dev.py`, and the quaternion-to-Euler round trip. Biggest unknown: camera permission inside LiveContainer.
 
 ### The handbook (added 14 November 2026)

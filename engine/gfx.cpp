@@ -1885,6 +1885,13 @@ Handle new_texture(int w, int h, const uint8_t* rgba, int flags, bool scriptOwne
     return make_texture(w, h, rgba, flags, scriptOwned ? OWNER_SCRIPT : OWNER_FILE);
 }
 
+bool update_texture(Handle tex, const uint8_t* rgba) {
+    Texture* t = textures.get(tex);
+    if (!t || !rgba || t->mips != 1 || t->framebuffer) return false;
+    vkQueueWaitIdle(queue);   // ponytail: waits for the last frame to finish with it. Fine for one small picture a frame
+    return upload_pixels(*t, rgba);
+}
+
 Handle new_target(int w, int h) {
     if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return 0;
     Texture t;

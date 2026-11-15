@@ -19,6 +19,11 @@ static bool recording = false;
 static std::string take;               // header and frames, as text
 static int frameCount = 0;
 static double startTime = 0;
+// The camera picture, turned upright (portrait) and shrunk, and each joint's place on it.
+static const int CAMERA_W = 270, CAMERA_H = 360;
+static std::vector<unsigned char> cameraPixels;
+static int cameraSerial = 0;
+static std::vector<float> screenPoints;   // x, y per joint, 0 to 1 across and down the upright picture
 
 static void append(std::string& out, float v) {
     char text[24];
@@ -84,6 +89,52 @@ static void append(std::string& out, float v) {
     }
 }
 
+// Every camera frame: an upright, small copy of the picture, and where each tracked joint appears on it.
+- (void)session:(ARSession*)session didUpdateFrame:(ARFrame*)frame {
+    CVPixelBufferRef image = frame.capturedImage;   // landscape, YCbCr: a brightness plane and a half-size colour plane
+    CVPixelBufferLockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
+    int width = (int)CVPixelBufferGetWidthOfPlane(image, 0), height = (int)CVPixelBufferGetHeightOfPlane(image, 0);
+    const unsigned char* luma = (const unsigned char*)CVPixelBufferGetBaseAddressOfPlane(image, 0);
+    const unsigned char* chroma = (const unsigned char*)CVPixelBufferGetBaseAddressOfPlane(image, 1);
+    size_t lumaRow = CVPixelBufferGetBytesPerRowOfPlane(image, 0), chromaRow = CVPixelBufferGetBytesPerRowOfPlane(image, 1);
+    std::vector<unsigned char> out((size_t)CAMERA_W * CAMERA_H * 4);
+    for (int v = 0; v < CAMERA_H; v++) {
+        for (int u = 0; u < CAMERA_W; u++) {
+            // Turned a quarter clockwise: the upright picture's (u, v) is the sensor's (v, height - 1 - u).
+            int x = v * width / CAMERA_H, y = height - 1 - u * height / CAMERA_W;
+            float Y = luma[(size_t)y * lumaRow + x];
+            const unsigned char* c = chroma + (size_t)(y / 2) * chromaRow + (size_t)(x / 2) * 2;
+            float cb = c[0] - 128.0f, cr = c[1] - 128.0f;
+            unsigned char* p = &out[((size_t)v * CAMERA_W + u) * 4];
+            p[0] = (unsigned char)std::clamp(Y + 1.402f * cr, 0.0f, 255.0f);
+            p[1] = (unsigned char)std::clamp(Y - 0.344136f * cb - 0.714136f * cr, 0.0f, 255.0f);
+            p[2] = (unsigned char)std::clamp(Y + 1.772f * cb, 0.0f, 255.0f);
+            p[3] = 255;
+        }
+    }
+    CVPixelBufferUnlockBaseAddress(image, kCVPixelBufferLock_ReadOnly);
+
+    std::vector<float> points;
+    for (ARAnchor* anchor in frame.anchors) {
+        if (![anchor isKindOfClass:[ARBodyAnchor class]] || !((ARBodyAnchor*)anchor).isTracked) continue;
+        ARBodyAnchor* body = (ARBodyAnchor*)anchor;
+        const simd_float4x4* model = body.skeleton.jointModelTransforms;
+        CGSize upright = CGSizeMake(height, width);
+        for (NSInteger i = 0; i < body.skeleton.jointCount; i++) {
+            simd_float4 world = simd_mul(body.transform, model[i].columns[3]);
+            CGPoint p = [frame.camera projectPoint:simd_make_float3(world) orientation:UIInterfaceOrientationPortrait viewportSize:upright];
+            points.push_back((float)(p.x / upright.width));
+            points.push_back((float)(p.y / upright.height));
+        }
+        break;
+    }
+
+    std::lock_guard<std::mutex> guard(lock);
+    cameraPixels.swap(out);
+    cameraSerial++;
+    screenPoints.swap(points);
+}
+
 - (void)session:(ARSession*)session didAddAnchors:(NSArray<__kindof ARAnchor*>*)anchors { [self use:anchors]; }
 - (void)session:(ARSession*)session didUpdateAnchors:(NSArray<__kindof ARAnchor*>*)anchors { [self use:anchors]; }
 - (void)session:(ARSession*)session didFailWithError:(NSError*)error {
@@ -120,6 +171,8 @@ extern "C" void gamelab_mocap_stop(void) {
     std::lock_guard<std::mutex> guard(lock);
     recording = false;
     tracked = false;
+    cameraPixels.clear();
+    screenPoints.clear();
 }
 
 extern "C" int gamelab_mocap_pose(float* out, int* parentsOut, int maxJoints, int* jointCount, char* error, size_t errorSize) {
@@ -148,6 +201,23 @@ extern "C" void gamelab_mocap_record(int on) {
 extern "C" int gamelab_mocap_frames(void) {
     std::lock_guard<std::mutex> guard(lock);
     return frameCount;
+}
+
+extern "C" int gamelab_mocap_camera(unsigned char* rgba, int maxBytes, int* w, int* h, int* serial) {
+    std::lock_guard<std::mutex> guard(lock);
+    if (cameraPixels.empty() || (int)cameraPixels.size() > maxBytes) return 0;
+    memcpy(rgba, cameraPixels.data(), cameraPixels.size());
+    *w = CAMERA_W;
+    *h = CAMERA_H;
+    *serial = cameraSerial;
+    return 1;
+}
+
+extern "C" int gamelab_mocap_screen(float* xy, int maxJoints) {
+    std::lock_guard<std::mutex> guard(lock);
+    int count = (int)std::min(screenPoints.size() / 2, (size_t)maxJoints);
+    memcpy(xy, screenPoints.data(), (size_t)count * 2 * sizeof(float));
+    return count;
 }
 
 extern "C" char* gamelab_mocap_take(size_t* size) {
