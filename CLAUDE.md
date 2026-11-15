@@ -124,6 +124,14 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - Weights: GVHMR's Google Drive hit its quota, so gvhmr/hmr2/vitpose came from the Hugging Face mirror `ryanrudes/gvhmr` after `tools/gvhmr/scan_checkpoint.py` (static pickle scan; verified to refuse an `os.system` trap) passed them; YOLO is Ultralytics' official v8.3.0 release.
 - **Status:** tested on the PC up to GVHMR's model: ffmpeg, WSL launch, YOLO, ViTPose-H and features all ran on the RTX 5080 with GVHMR's sample video. It stops at `SMPLX_NEUTRAL.npz`, which the user must download (licence-gated) into `tools/.bin/body_models/smplx/`. Untested: the BVH export, the phone's video recording, upload, and replay. Non-commercial licences (GVHMR weights, SMPL-X).
 
+### SAM 3D Body on the PC (added 15 November 2026, replaces GVHMR in the mocap backend)
+
+- The user didn't want the SMPL-X registration GVHMR needs, so the mocap backend runs **SAM 3D Body** (Meta, arXiv 2602.15989, MHR body rig, 127 joints with hands and feet) instead: `tools/sam3d/install.sh` (WSL, conda env `sam3d`, `~/sam-3d-body`, PyTorch 2.10), `tools/sam3d/run_take.py` (YOLO box per frame, iPhone 11 26 mm lens as intrinsics, 5-frame moving average, writes `captures/<name>-sam3d.bvh` and a half-rate `-sam3d.txt` for the phone). Detectron2 and MoGe are skipped on purpose.
+- Weights: Meta's Hugging Face repos are gated, so they came from `jetjodh/sam-3d-body-dinov3`, after checking `model.ckpt` and `mhr_model.pt` are byte-identical (Hugging Face LFS SHA-256) across 5 independent re-uploads and scanning `model.ckpt` with `tools/gvhmr/scan_checkpoint.py`. The SAM License allows redistribution with the licence attached; it is kept with the files. `mhr_model.pt` is TorchScript.
+- **Coordinate trap:** `pred_joint_coords` (+ `pred_cam_t`) are in camera space (y down) but `pred_global_rots` are in the body model's y-up frame. Flip the positions, leave the rotations. `tools/sam3d/check_bvh.py` rebuilds positions from a BVH: 11.5 mm mean error on the sample clip (worst 82 mm at fingertips: MHR bone stretch).
+- Tested on the PC with GVHMR's sample video through `server.run_job`. Untested from the phone (needs app build 057b3b19, already built). About 40 s of model loading per take, then roughly 3 frames a second.
+- GVHMR stays installed (`tools/gvhmr`); it only lacks `SMPLX_NEUTRAL.npz`.
+
 ### The handbook (added 14 November 2026)
 
 - `python tools/dev.py docs` serves it on port 8766 with live rebuild; `docs` at the prompt does the same in the background. It needs `pip install mkdocs-material`, the one non-standard-library dependency in the repo, and only for the handbook.

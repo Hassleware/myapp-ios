@@ -1,7 +1,7 @@
 -- Motion capture: the iPhone's back camera tracks a body (ARKit) and records a video at the same time.
--- SEND saves ARKit's take as captures/<name>.bvh at once, and hands the video to GVHMR on the PC's graphics card,
--- a stronger model, which writes captures/<name>-gvhmr.bvh. The phone shows the PC's progress, then replays
--- GVHMR's result (REPLAY switches between that and the live camera).
+-- SEND saves ARKit's take as captures/<name>.bvh at once, and hands the video to SAM 3D Body (Meta) on the PC's
+-- graphics card, a stronger model with hands and feet, which writes captures/<name>-sam3d.bvh. The phone shows the PC's progress, then replays
+-- that result (REPLAY switches between that and the live camera).
 -- Prop the phone up about 3 metres away at waist height, or have someone hold it, and keep the whole body in view.
 
 local lib = include("lib.lua")
@@ -12,7 +12,7 @@ local countdown, record_start = 0, 0
 local status = ""
 local takes = math.floor(save.get("takes", 0))
 local pose, parents, tracked = {}, {}, false
-local result, showing_result, result_start = nil, false, 0   -- GVHMR's motion: { fps, parents, frames }
+local result, showing_result, result_start = nil, false, 0   -- the PC's result: { fps, parents, frames }
 local buttons
 local CAMERA_ALPHA = 0.2                  -- how strongly the camera picture shows behind the skeleton
 local FLIP_X, FLIP_Y = false, false       -- if the picture comes out mirrored or upside down, flip it here
@@ -36,7 +36,7 @@ local function read_result(text)
   return motion
 end
 
--- Asks the PC how GVHMR is getting on, every 1.5 seconds, until it is done or has failed.
+-- Asks the PC how the model is getting on, every 1.5 seconds, until it is done or has failed.
 local function watch(name)
   lib.run(function()
     while state == "processing" do
@@ -45,14 +45,14 @@ local function watch(name)
         answered = true
         if err or code ~= 200 then status = "PC: " .. tostring(err or body) return end
         local job, stage = body:match('"state":%s*"(.-)"'), body:match('"stage":%s*"(.-)"') or ""
-        status = "PC (GVHMR): " .. stage
-        if job == "failed" then state = "idle" status = "GVHMR failed: " .. stage .. " (details in the dev.py window)" end
+        status = "PC (SAM 3D Body): " .. stage
+        if job == "failed" then state = "idle" status = "SAM 3D Body failed: " .. stage .. " (details in the dev.py window)" end
         if job == "done" then
           net.backend({ path = "/result?name=" .. name, timeout = 30 }, function(c, text, e)
             state = "idle"
             if e or c ~= 200 then status = "Couldn't fetch the result: " .. tostring(e or text) return end
             result, showing_result, result_start = read_result(text), true, sys.real_time()
-            status = "GVHMR done: captures/" .. name .. "-gvhmr.bvh. Replaying it. REPLAY switches back to live."
+            status = "Done: captures/" .. name .. "-sam3d.bvh. Replaying it. REPLAY switches back to live."
             input.haptic("success")
           end)
         end
@@ -84,11 +84,11 @@ local function send()
       if video then break end
       lib.wait(0.1)
     end
-    if not video then state, status = "idle", "No video for this take, so no GVHMR. The ARKit .bvh is saved." return end
+    if not video then state, status = "idle", "No video for this take, so only the ARKit .bvh is saved." return end
     status = string.format("Sending the video (%.1f MB)...", #video / 1e6)
     net.backend({ path = "/video?name=" .. name, method = "POST", body = video, timeout = 120 }, function(code, body, err)
       if err or code ~= 202 then state, status = "idle", "Video FAILED: " .. tostring(err or body) return end
-      state, status = "processing", "Video received. GVHMR is starting on the PC..."
+      state, status = "processing", "Video received. SAM 3D Body is starting on the PC..."
       watch(name)
     end)
   end)
@@ -154,7 +154,7 @@ function update(dt)
   end
 end
 
--- GVHMR's motion, looping, seen from the front and a little above, with a floor.
+-- SAM 3D Body's motion, looping, seen from the front and a little above, with a floor.
 local function draw_result()
   local frames = result.frames
   local f = frames[math.floor((sys.real_time() - result_start) * result.fps) % #frames + 1]
@@ -231,7 +231,7 @@ function draw()
   end
 
   local left, top = gfx.safe()
-  gfx.text(showing_result and "MOCAP  -  GVHMR REPLAY" or "MOCAP", left + 80, top + 20, 30, 1, 1, 1)
+  gfx.text(showing_result and "MOCAP  -  SAM 3D REPLAY" or "MOCAP", left + 80, top + 20, 30, 1, 1, 1)
   gfx.text("takes saved: " .. takes, left + 80, top + 62, 18, 0.6, 0.65, 0.75)
 
   if state == "countdown" then

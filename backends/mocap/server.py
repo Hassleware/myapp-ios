@@ -2,10 +2,10 @@
 
 Two kinds of take arrive from the phone:
   * POST /take?name=walk   ARKit's own skeleton, converted here at once to captures/walk.bvh
-  * POST /video?name=walk  the take's video. GVHMR (a stronger model, on this PC's graphics card, in WSL) turns it
-                           into captures/walk-gvhmr.bvh in the background. The phone asks GET /job?name=walk for
+  * POST /video?name=walk  the take's video. SAM 3D Body (Meta's stronger model, on this PC's graphics card, in WSL)
+                           turns it into captures/walk-sam3d.bvh in the background. The phone asks GET /job?name=walk for
                            progress and fetches GET /result?name=walk (joint positions) to replay it.
-GVHMR is installed by tools/gvhmr/install.sh; tools/gvhmr/run_take.py is what runs for each video.
+SAM 3D Body is installed by tools/sam3d/install.sh; tools/sam3d/run_take.py is what runs for each video.
 
 The phone sends   POST /take?name=walk   with the recording as text (see ios/bodytrack.mm for the format).
 This writes      captures/walk.bvh   in the repo (git ignores the folder) and answers with where it went.
@@ -138,8 +138,9 @@ def run_job(name):
         set_status(name, state="running", stage="preparing the video")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-r", "30", "-c:v", "libx264", "-crf", "18",
                         "-pix_fmt", "yuv420p", str(upright)], check=True, capture_output=True)
-        command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate gvhmr && cd ~/GVHMR && "
-                   f"python '{wsl_path(REPO / 'tools/gvhmr/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'")
+        # SAM 3D Body (tools/sam3d). GVHMR (tools/gvhmr) also works once its SMPL-X body model is downloaded.
+        command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate sam3d && cd ~/sam-3d-body && "
+                   f"python '{wsl_path(REPO / 'tools/sam3d/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'")
         process = subprocess.Popen(["wsl", "-d", "Ubuntu", "--", "bash", "-lc", command], stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
         tail = []
@@ -148,10 +149,10 @@ def run_job(name):
             if line.startswith("STAGE "):
                 set_status(name, state="running", stage=line[6:].strip())
                 print(f"  [mocap] {name}: {line[6:].strip()}", flush=True)
-        if process.wait() != 0 or not (CAPTURES / f"{name}-gvhmr.txt").exists():
-            raise RuntimeError("GVHMR stopped:\n" + "\n".join(tail))
-        set_status(name, state="done", stage="done", file=f"captures/{name}-gvhmr.bvh")
-        print(f"  [mocap] saved captures/{name}-gvhmr.bvh", flush=True)
+        if process.wait() != 0 or not (CAPTURES / f"{name}-sam3d.txt").exists():
+            raise RuntimeError("SAM 3D Body stopped:\n" + "\n".join(tail))
+        set_status(name, state="done", stage="done", file=f"captures/{name}-sam3d.bvh")
+        print(f"  [mocap] saved captures/{name}-sam3d.bvh", flush=True)
     except Exception as problem:
         detail = getattr(problem, "stderr", b"") or b""
         message = str(problem) + ("\n" + detail.decode(errors="replace") if detail else "")
@@ -175,7 +176,7 @@ def handle(method, path, query, body, headers):
         status = CAPTURES / f"{take_name(query)}.job.json"
         return (200, status.read_text()) if status.exists() else (404, json.dumps({"error": "no such job"}))
     if method == "GET" and path == "/result":
-        result = CAPTURES / f"{take_name(query)}-gvhmr.txt"
+        result = CAPTURES / f"{take_name(query)}-sam3d.txt"
         return (200, result.read_text(), "text/plain") if result.exists() else (404, json.dumps({"error": "not ready"}))
 
     if method == "POST" and path == "/take":
