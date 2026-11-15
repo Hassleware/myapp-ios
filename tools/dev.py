@@ -257,7 +257,8 @@ def create_backend(name):
     if not client.exists():
         shutil.copy(TOOLS / "backend_client.lua", client)
     return (f"Created backends/{name}/server.py (accounts and sign-in) and games/{name}/auth.lua to call it:\n"
-            f'  local auth = include("auth.lua")   auth.register(email, password, function(ok, err) end)')
+            f'  local auth = include("auth.lua")   auth.send_code(email, ...)   auth.verify(email, code, ...)\n'
+            f"With no mail set up, sign-in codes are printed in this window.")
 
 
 # ---------------------------------------------------------------- game backends

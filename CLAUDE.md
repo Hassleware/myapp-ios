@@ -50,7 +50,7 @@ docs/hooks.py       pulls real code into pages by name and checks the Lua API de
 docs/api/gamelab.lua  every Lua function described once: feeds the handbook, the drift check and VS Code (.luarc.json)
 mkdocs.yml          the handbook's settings and menu
 tools/template/     what `new <name>` copies: an empty main.lua with every callback, lib.lua, a commented game.cfg
-tools/backend_template.py   what `backend <game>` copies to backends/<game>/server.py: accounts and sign-in
+tools/backend_template.py   what `backend <game>` copies to backends/<game>/server.py: accounts and emailed-code sign-in
 tools/backend_client.lua    what `backend <game>` copies to games/<game>/auth.lua: the game's side of sign-in
 backends/<game>/    each game's own server code (Python). Runs inside dev.py on the PC; never synced or bundled
 .github/workflows/build.yml   iPhone build
@@ -106,7 +106,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 
 - `net.backend({path=...}, cb)` goes to the game's own backend; the game never names a host. In dev builds `net.cpp` points it at `dev.py` (`/backend/<game>/<path>`): on the PC over WinHTTP to 127.0.0.1:8765, in the loader through `devsync::backend`, which uses sync's own POSIX socket client, so **iOS needs no ATS plain-http exception**. In `SINGLE_GAME` builds it is `game.cfg`'s `backend = https://...` plus the path, through the normal HTTPS rules (that host is allowed automatically).
 - `dev.py` loads `backends/<game>/server.py` with importlib, reloads it when its modified time changes, and calls `handle(method, path, query, body, headers)` under one lock. Errors print with a traceback and return 500. The file also runs on its own (`python server.py 8080`) for a real deployment, which is **untested**.
-- The backend template is **accounts and sign-in only** (the user's choice: the one thing every game and app needs). scrypt (2^17, 8, 1) with per-password salts, 8 to 128 character passwords normalised with NFKC, 256-bit session tokens stored as SHA-256, 30-day sessions, the same answer and work for unknown emails, 5 failures per email per 15 minutes, `DELETE /me` for the App Store's account-deletion rule. A 20-check test of it passed on the PC. Missing on purpose: email verification, password reset, Sign in with Apple, refresh tokens, and Keychain storage of the token on the phone (`auth.lua` uses `save`).
+- The backend template is **accounts and sign-in only** (the user's choice: the one thing every game and app needs), **passwordless like Supercell ID**: `POST /code` emails a 6-digit code, `POST /verify` swaps it for a session token. Codes: `secrets.randbelow`, single use, 10 minutes, 5 tries, one per email per minute, stored hashed. Sessions: 256-bit tokens stored as SHA-256, a year, pushed forward on each use. `DELETE /me` for the App Store's account-deletion rule. With no `GAMELAB_SMTP` set the code is printed in the `dev.py` window; with it, sent by SMTP with STARTTLS (**untested**). A 15-check test of the flow passed on the PC. Missing on purpose: Sign in with Apple, a daily email cap, refresh tokens, Keychain storage of the token on the phone (`auth.lua` uses `save`).
 - `net.request` still refuses all plain `http://`. Only the engine-built backend address may be plain http, and only in dev builds.
 - **Untested on the phone**: the loader path through `devsync::backend` has only been compiled by the GitHub build. Tested on the PC: `dev.py` routing (store, list, 404, a backend error) and the engine reaching `127.0.0.1:8765` over plain http.
 

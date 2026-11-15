@@ -1,12 +1,41 @@
--- Typing, pasting and calling a web API. The smallest thing that shows all three.
--- game.cfg lists the hosts this game may call; the engine refuses every other address.
+-- Typing, pasting, calling a web API, and signing in with an emailed code (like Supercell ID).
+-- game.cfg lists the hosts net.request may call. The sign-in talks to backends/net-demo/server.py
+-- through dev.py; with no mail set up, the code appears in the dev.py window.
 
-local text, kind, reply = "", "text", "Tap CALL API"
+local auth = include("auth.lua")
+
+local text, kind, email = "", "email", nil
+local reply = auth.signed_in() and "Signed in. Tap WHO AM I." or "Tap EMAIL, type your address, then SEND CODE."
+
+local function show(ok_text)
+  return function(ok, err) reply = ok and ok_text or ("FAILED: " .. tostring(err)) end
+end
+
 local buttons = {
-  { label = "TEXT",     run = function() kind = "text" input.keyboard(true, "text") end },
-  { label = "CODE",     run = function() kind = "code" input.keyboard(true, "code") end },   -- digits; iOS offers an SMS code
-  { label = "PASTE",    run = function() on_text(input.paste()) end },
-  { label = "HIDE",     run = function() input.keyboard(false) end },
+  { label = "EMAIL", run = function() kind, text = "email", "" input.keyboard(true, "email") end },
+  { label = "SEND CODE", run = function()
+      email = text
+      reply = "sending..."
+      auth.send_code(email, function(ok, err)
+        if not ok then reply = "FAILED: " .. tostring(err) return end
+        reply = "Code sent to " .. email .. ". Type it in, then SIGN IN."
+        kind, text = "code", ""
+        input.keyboard(true, "code")   -- iOS offers a code that just arrived in Mail above the keys
+      end)
+    end },
+  { label = "PASTE", run = function() on_text(input.paste()) end },
+  { label = "SIGN IN", run = function()
+      reply = "checking..."
+      auth.verify(email or "", text, function(ok, err)
+        reply = ok and "Signed in. The phone stays signed in until LOG OUT." or ("FAILED: " .. tostring(err))
+        if ok then input.keyboard(false) text = "" end
+      end)
+    end },
+  { label = "WHO AM I", run = function()
+      auth.me(function(user, err) reply = user and ("You are " .. tostring(user.email) .. " (account " .. tostring(user.id) .. ")") or ("FAILED: " .. tostring(err)) end)
+    end },
+  { label = "LOG OUT", run = function() auth.logout(function() reply = "Logged out." end) end },
+  { label = "HIDE KEYS", run = function() input.keyboard(false) end },
   { label = "CALL API", run = function()
       reply = "asking..."
       net.request({ url = "https://api.github.com/zen" }, function(status, body, err)
@@ -52,15 +81,16 @@ function draw()
   local x, y, width = layout()
   gfx.rect(x, y, width, 90, 0.16, 0.18, 0.25)
   local cursor = input.keyboard() and sys.real_time() % 1 < 0.5 and "_" or ""
-  gfx.text(text .. cursor, x + 16, y + 32, 26, 1, 1, 1)
+  local hint = text == "" and not input.keyboard() and (kind == "code" and "6-digit code" or "email") or ""
+  gfx.text(text .. cursor .. hint, x + 16, y + 32, 26, text == "" and 0.5 or 1, text == "" and 0.55 or 1, text == "" and 0.65 or 1)
   for _, b in ipairs(buttons) do
     gfx.rect(b.x, b.y, b.w, b.h, 0.20, 0.45, 0.85)
     gfx.text(b.label, b.x + 16, b.y + 26, 24, 1, 1, 1)
   end
   -- The reply, wrapped by hand: the built-in font has no word wrap.
-  local line = 0
+  local line, top = 0, y + 110 + math.ceil(#buttons / 2) * 90 + 20
   for i = 1, #reply, 28 do
-    gfx.text(reply:sub(i, i + 27), x, y + 400 + line * 34, 24, 0.7, 0.9, 0.7)
+    gfx.text(reply:sub(i, i + 27), x, top + line * 34, 24, 0.7, 0.9, 0.7)
     line = line + 1
   end
 end

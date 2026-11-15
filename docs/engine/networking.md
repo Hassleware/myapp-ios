@@ -121,40 +121,56 @@ creates two files:
 
 | File | What it is |
 |---|---|
-| `backends/coin-dash/server.py` | Accounts and sign-in, the part nearly every game and app needs: register, log in, log out, who am I, delete my account. Add the game's own calls at the bottom |
+| `backends/coin-dash/server.py` | Accounts and sign-in, the part nearly every game and app needs. Add the game's own calls at the bottom |
 | `games/coin-dash/auth.lua` | The game's side of it |
+
+Sign-in works like Supercell ID: **no passwords**. The player types their email, gets a 6-digit code, types it in, and the phone stays signed in until they log out. Signing up and signing in are the same steps; the account is made the first time a code is accepted.
 
 ```lua
 local auth = include("auth.lua")
 
-auth.register("ann@example.com", "correct horse", function(ok, err) end)
-auth.login("ann@example.com", "correct horse", function(ok, err) end)
+auth.send_code("ann@example.com", function(ok, err) end)         -- emailed, or printed in the dev.py window
+input.keyboard(true, "code")                                     -- iOS offers a code that just arrived in Mail
+auth.verify("ann@example.com", "123456", function(ok, err) end)  -- signed in from now on
 auth.me(function(user, err) print(user.id, user.email) end)
 auth.call("POST", "/save", '{"level": 3}', function(text, err) end)   -- your own calls, sent signed in
 auth.logout()      auth.delete()      auth.signed_in()
 ```
 
-Underneath, `auth.lua` uses `net.backend`, which takes a `path` where `net.request` takes a `url`:
+`games/net-demo` has a working sign-in screen built on this.
 
-```lua
-net.backend({ path = "/me", headers = { Authorization = "Bearer " .. token } }, function(status, body, err) end)
+### Getting the code, just you and your phone
+
+With nothing set up, the server prints each code in the `dev.py` window:
+
 ```
+  [backend net-demo] sign-in code for ann@example.com: 482913
+```
+
+To get real emails instead, give `dev.py` a mail account before starting it. Any account that allows SMTP works; for Gmail, turn on 2-step verification and create an *app password*:
+
+```powershell
+$env:GAMELAB_SMTP = "smtp.gmail.com:587"
+$env:GAMELAB_SMTP_USER = "you@gmail.com"
+$env:GAMELAB_SMTP_PASSWORD = "the app password"
+python tools/dev.py
+```
+
+These live only in that PowerShell window. Never put them in a file in the repository. The email's subject starts with the code, which is what lets iOS offer it above the keyboard.
 
 ### What the sign-in follows
 
-The template follows the OWASP password-storage and session cheat sheets and NIST SP 800-63B:
-
 | Practice | In the template |
 |---|---|
-| A slow, memory-hard password hash with a salt per password | scrypt with OWASP's settings (2^17, 8, 1); the settings are stored with each hash so they can be raised later |
-| Length rules only | 8 to 128 characters, no forced symbols, no expiry; text normalised (NFKC) before hashing |
-| Unguessable, revocable sessions | 256 random bits per token; only its SHA-256 is stored; 30 days; logout and deletion end it |
-| No hints about which emails exist | Login gives the same answer, after the same work, for an unknown email and a wrong password |
-| Slowing down guessing | Five failed logins for an email in 15 minutes, and that email is refused for the rest of the window |
+| Unguessable, single-use, short-lived codes | 6 digits from the operating system's secure random source; one use; 10 minutes; 5 tries, then a new code is needed |
+| Nothing secret stored as it is | Only hashes of codes and of session tokens are kept, so a leaked database holds nothing usable |
+| No hints about which emails have accounts | Asking for a code answers the same for every address |
+| No flooding someone's inbox | One code per email per minute |
+| Long, revocable sessions | 256 random bits per token; a year, pushed forward each time it is used; logout and deletion end it |
 | No timing leaks | Secrets compared with `hmac.compare_digest` |
 | Account deletion inside the app | `DELETE /me`. The App Store requires it of any app that creates accounts |
 
-Not included yet: email verification and password reset (both need a way to send email), Sign in with Apple, and refresh tokens. On the phone, `auth.lua` keeps the token with `save`, which is a plain file; move it to the iOS Keychain before release.
+Not included yet: Sign in with Apple, a daily cap on emails per address, and refresh tokens. On the phone, `auth.lua` keeps the token with `save`, which is a plain file; move it to the iOS Keychain before release.
 
 The game never says where the server is. The engine decides:
 
@@ -175,7 +191,7 @@ How `dev.py` passes a call on:
 ::: source tools/dev.py backend_module
 
 !!! warning "What the development link is and is not"
-    The path from the phone to `dev.py` is plain HTTP on your own Wi-Fi, like the file sync. Passwords typed while developing cross your network unencrypted, so use test accounts. Players never use it: a release build only knows the HTTPS address in `game.cfg`. Plain `http://` stays refused for `net.request`; only `net.backend`, whose address the engine builds itself, can reach the dev PC.
+    The path from the phone to `dev.py` is plain HTTP on your own Wi-Fi, like the file sync. Codes and tokens cross your network unencrypted while developing, so use test accounts. Players never use it: a release build only knows the HTTPS address in `game.cfg`. Plain `http://` stays refused for `net.request`; only `net.backend`, whose address the engine builds itself, can reach the dev PC.
 
 **For a release**, the same `server.py` runs on its own (`python server.py 8080`) on a server you rent, behind HTTPS, and `game.cfg` gets its address. This path is **not yet tested**. A real deployment also wants a production web server in front and backups of the database.
 
