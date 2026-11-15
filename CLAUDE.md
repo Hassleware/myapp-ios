@@ -43,7 +43,8 @@ games/net-demo/     the only game left in the folder: keyboard, paste and one we
                     render-demo, shader-demo, runner) were deleted on request; they are in git history up to 261eb48
 ios/Info.plist.in   iPhone app settings
 ios/haptics.mm      the iPhone's tap motor (UIKit)
-ios/http.mm         HTTPS through NSURLSession. With haptics.mm, the only Objective-C in the project
+ios/http.mm         HTTPS through NSURLSession
+ios/bodytrack.mm    ARKit body tracking for motion capture (declared for C++ in engine/mocap.h, stubbed off-iPhone)
 tools/dev.py        the one dev tool: watch, serve, run, ship, status, release, doctor, check, docs
 docs/               the handbook (MkDocs + Material): onboarding, a tutorial per language, engine tour, reference
 docs/hooks.py       pulls real code into pages by name and checks the Lua API description against script.cpp
@@ -110,6 +111,11 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - `net.request` still refuses all plain `http://`. Only the engine-built backend address may be plain http, and only in dev builds.
 - **Untested on the phone**: the loader path through `devsync::backend` has only been compiled by the GitHub build. Tested on the PC: `dev.py` routing (store, list, 404, a backend error) and the engine reaching `127.0.0.1:8765` over plain http.
 
+### Motion capture (added 15 November 2026)
+
+- `games/mocap` records a take with ARKit body tracking (`ios/bodytrack.mm`), sends the raw take with `net.backend` (backend uploads may be up to 64 MB; `net.request` stays at 1 MB), and `backends/mocap/server.py` writes `captures/<name>.bvh` (git-ignored). The take format: a header of joint name, parent and local offset (measured at the first recorded frame), then per frame the time, the body's room position and turn, and every joint's local rotation quaternion. BVH channels are ZXY Euler; the converter resamples to 60 fps by nearest frame. `NSCameraUsageDescription` is in the loader's Info.plist keys.
+- **Untested on the phone.** Tested on the PC: the screen, recording flow and sending with a stand-in skeleton, a real `.bvh` written through `dev.py`, and the quaternion-to-Euler round trip. Biggest unknown: camera permission inside LiveContainer.
+
 ### The handbook (added 14 November 2026)
 
 - `python tools/dev.py docs` serves it on port 8766 with live rebuild; `docs` at the prompt does the same in the background. It needs `pip install mkdocs-material`, the one non-standard-library dependency in the repo, and only for the handbook.
@@ -140,6 +146,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | Updating the app on the phone | Game Lab is installed **inside LiveContainer**. `sidestore://install` failed (bundle mismatch) and `livecontainer://install` failed ("LiveContainer must refresh to install apps": it won't install while an app runs inside it). The working route, **tested**: DOWNLOAD UPDATE (Safari saves the IPA), then **+** in LiveContainer. Don't retry in-app install links |
 | Keyboard, clipboard and `net.request` (14 November 2026) | Tested on the PC: typing, backspace, a real HTTPS call, a 404, and refusals of plain http and unlisted hosts. **Untested on the phone**: `ios/http.mm` has never been compiled on the PC, the on-screen keyboard, the SMS code suggestion, the paste permission prompt |
 | Game backends (15 November 2026) | Tested on the PC: `dev.py` routing and the engine's plain-http call to it. **Untested**: the loader's path to the backend on the phone, and a standalone release with `backend = https://...` |
+| Motion capture (15 November 2026) | Tested on the PC with a stand-in skeleton, including a `.bvh` written through `dev.py`. **Untested on the phone**: ARKit tracking, the camera permission inside LiveContainer, a real take's size and the result in Blender |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
 | `release <game>` standalone build | **Untested** |
 | App Store signing and upload | **Not built** |

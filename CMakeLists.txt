@@ -48,8 +48,9 @@ set(ENGINE_SOURCES engine/main.cpp engine/gfx.cpp engine/input.cpp engine/script
     engine/model.cpp engine/collide.cpp engine/audio.cpp engine/net.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   enable_language(OBJCXX)
-  list(APPEND ENGINE_SOURCES ios/haptics.mm ios/http.mm)   # the phone's tap-feedback motor, and HTTPS through NSURLSession
-  set_source_files_properties(ios/haptics.mm ios/http.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+  # the phone's tap-feedback motor, HTTPS through NSURLSession, and body tracking for motion capture
+  list(APPEND ENGINE_SOURCES ios/haptics.mm ios/http.mm ios/bodytrack.mm)
+  set_source_files_properties(ios/haptics.mm ios/http.mm ios/bodytrack.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 endif()
 
 # A standalone game may only be held one way up. Its game.cfg says so with a line like: orientation = landscape
@@ -108,12 +109,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   endif()
   target_link_libraries(gamelab PRIVATE ${MOLTENVK_LIB}
     "-framework Metal" "-framework QuartzCore" "-framework IOSurface" "-framework Foundation"
-    "-framework UIKit" "-framework CoreGraphics" "-lc++")
+    "-framework UIKit" "-framework CoreGraphics" "-framework ARKit" "-lc++")
 
   # Only the loader talks to the PC and shows its files in the Files app.
   set(IOS_LOADER_KEYS "")
   if(WITH_SYNC)
-    set(IOS_LOADER_KEYS "    <key>NSLocalNetworkUsageDescription</key>
+    set(IOS_LOADER_KEYS "    <key>NSCameraUsageDescription</key>
+    <string>Motion capture: tracks your body through the camera. Nothing is recorded but the skeleton.</string>
+    <key>NSLocalNetworkUsageDescription</key>
     <string>Finds the dev server on your PC to load your games.</string>
     <key>UIFileSharingEnabled</key>
     <true/>

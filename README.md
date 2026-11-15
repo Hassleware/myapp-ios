@@ -124,6 +124,9 @@ input.paste() -> text       input.copy(text)         -- the clipboard. iOS asks 
 net.request({ url=, method="GET", headers={}, body=, timeout=15 }, function(status, body, err) ... end)
 net.backend({ path="/scores", ... }, function(status, body, err) ... end)   -- this game's own server (see below)
 
+-- motion capture (iPhone only; see the handbook's Motion capture page)
+mocap.start()  mocap.pose() -> tracked, positions, parents  mocap.record(on)  mocap.frames()  mocap.take() -> text
+
 -- everything else
 save.get(key, default)      save.set(key, value)
 sys.time()                  sys.real_time()          sys.time_scale([scale])   -- 0 stops the game, 0.3 is slow motion

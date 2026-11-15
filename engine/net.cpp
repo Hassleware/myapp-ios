@@ -29,6 +29,7 @@ namespace net {
 namespace {
 
 const size_t MAX_SEND = 1 << 20;      // 1 MB up
+const size_t MAX_BACKEND_SEND = 64 << 20;   // 64 MB up to the game's own backend (a mocap take is about 10 MB a minute)
 const size_t MAX_RECEIVE = 4 << 20;   // 4 MB down
 const int MAX_IN_FLIGHT = 8;
 
@@ -109,7 +110,7 @@ std::string check_target(const Request& r, Target& target) {
         if (!host_allowed(target.host)) return "'" + target.host + "' is not in this game's game.cfg (add a line: hosts = " + target.host + ")";
     }
     if (r.method != "GET" && r.method != "POST" && r.method != "PUT" && r.method != "PATCH" && r.method != "DELETE") return "unknown method '" + r.method + "'";
-    if (r.body.size() > MAX_SEND) return "the body is over 1 MB";
+    if (r.body.size() > (r.backend ? MAX_BACKEND_SEND : MAX_SEND)) return r.backend ? "the body is over 64 MB" : "the body is over 1 MB";
     for (const auto& h : r.headers) {
         // A line break inside a header would let its text pose as extra headers or a second request.
         if (h.first.empty() || h.first.find_first_of(": \r\n") != std::string::npos || h.second.find_first_of("\r\n") != std::string::npos)

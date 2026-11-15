@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "collide.h"
 #include "gfx.h"
 #include "input.h"
+#include "mocap.h"
 #include "model.h"
 #include "net.h"
 
@@ -1066,6 +1068,66 @@ int send_request(lua_State* l, bool backend) {
 int l_net_request(lua_State* l) { return send_request(l, false); }
 int l_net_backend(lua_State* l) { return send_request(l, true); }
 
+// ---- mocap: ARKit body tracking (iPhone only) ----
+
+// mocap.start() -> true, or false and why not
+int l_mocap_start(lua_State* l) {
+    char error[256] = "";
+    bool ok = gamelab_mocap_start(error, sizeof(error)) != 0;
+    lua_pushboolean(l, ok);
+    if (ok) return 1;
+    lua_pushstring(l, error);
+    return 2;
+}
+
+int l_mocap_stop(lua_State*) {
+    gamelab_mocap_stop();
+    return 0;
+}
+
+// mocap.pose() -> tracked, {x, y, z, x, y, z, ...}, {parent, ...} (counting from 1; 0 for the root), error
+int l_mocap_pose(lua_State* l) {
+    static float positions[256 * 3];
+    static int parents[256];
+    int count = 0;
+    char error[256] = "";
+    bool tracked = gamelab_mocap_pose(positions, parents, 256, &count, error, sizeof(error)) != 0;
+    lua_pushboolean(l, tracked);
+    lua_createtable(l, count * 3, 0);
+    for (int i = 0; i < count * 3; i++) {
+        lua_pushnumber(l, positions[i]);
+        lua_rawseti(l, -2, i + 1);
+    }
+    lua_createtable(l, count, 0);
+    for (int i = 0; i < count; i++) {
+        lua_pushinteger(l, parents[i] + 1);
+        lua_rawseti(l, -2, i + 1);
+    }
+    if (error[0]) lua_pushstring(l, error);
+    else lua_pushnil(l);
+    return 4;
+}
+
+int l_mocap_record(lua_State* l) {
+    gamelab_mocap_record(lua_toboolean(l, 1));
+    return 0;
+}
+
+int l_mocap_frames(lua_State* l) {
+    lua_pushinteger(l, gamelab_mocap_frames());
+    return 1;
+}
+
+// mocap.take() -> the recording as text (send it with net.backend), or nil
+int l_mocap_take(lua_State* l) {
+    size_t size = 0;
+    char* text = gamelab_mocap_take(&size);
+    if (!text) return 0;
+    lua_pushlstring(l, text, size);
+    free(text);
+    return 1;
+}
+
 int l_platform(lua_State* l) {
 #if defined(SDL_PLATFORM_IOS)
     lua_pushstring(l, "ios");
@@ -1188,6 +1250,8 @@ bool load(const std::string& dir, const std::string& saveFile) {
                                        {"haptic", l_haptic}, {"keyboard", l_keyboard}, {"paste", l_paste}, {"copy", l_copy},
                                        {nullptr, nullptr}};
     const luaL_Reg netFunctions[] = {{"request", l_net_request}, {"backend", l_net_backend}, {nullptr, nullptr}};
+    const luaL_Reg mocapFunctions[] = {{"start", l_mocap_start}, {"stop", l_mocap_stop}, {"pose", l_mocap_pose}, {"record", l_mocap_record},
+                                       {"frames", l_mocap_frames}, {"take", l_mocap_take}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
                                      {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};
@@ -1197,6 +1261,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
     register_table("audio", audioFunctions);
     register_table("input", inputFunctions);
     register_table("net", netFunctions);
+    register_table("mocap", mocapFunctions);
     register_table("save", saveFunctions);
     register_table("sys", sysFunctions);
     // The built-in shapes, usable with gfx.draw like any other mesh.
@@ -1232,6 +1297,7 @@ void unload() {
     problem.clear();
     saves.clear();
     netCallbacks.clear();   // answers still on their way are dropped when they arrive
+    gamelab_mocap_stop();   // the camera goes off when the game does
     input::keyboard(false);
     input::set_controls({});
     collide::clear();

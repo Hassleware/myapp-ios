@@ -13,7 +13,7 @@
 -- then scale sx, sy, sz; leave the end off for no rotation and scale 1. Colours are r, g, b [, a] from 0 to 1.
 -- Things that are loaded or made come back as a number (a handle) to pass to other functions.
 
-gfx, model, phys, audio, input, net, save, sys = {}, {}, {}, {}, {}, {}, {}, {}
+gfx, model, phys, audio, input, net, mocap, save, sys = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
 -- # The scene (set every frame, inside draw)
 
@@ -171,7 +171,7 @@ function gfx.plane(x, y, z, sx, sz, r, g, b, a) end
 function gfx.particles(numbers, count) end
 
 --- `gfx.line(x1, y1, z1, x2, y2, z2, r, g, b, a [, width])`
---- A line in the world. Useful for debugging.
+--- A line in the world. width is in world units (metres), 0.03 if left out. Useful for debugging.
 function gfx.line(x1, y1, z1, x2, y2, z2, r, g, b, a, width) end
 
 --- `gfx.project(x, y, z) -> sx, sy`
@@ -427,6 +427,32 @@ function net.request(options, callback) end
 --- `net.backend({ path = "/scores", method = "GET", headers = {}, body =, timeout = 15 }, function(status, body, err) ... end)`
 --- Calls this game's own backend. While developing, that is backends/<game>/server.py, run by dev.py on your PC; in a standalone release, the address in game.cfg's backend line. The game never names a host.
 function net.backend(options, callback) end
+
+-- # Motion capture (iPhone only: ARKit body tracking through the back camera)
+
+--- `mocap.start() -> true | false, why`
+--- Starts tracking a body. On the PC, or an iPhone older than the XS / XR, it answers false and why.
+function mocap.start() end
+
+--- `mocap.stop()`
+--- Turns the camera off. It also goes off when the game stops.
+function mocap.stop() end
+
+--- `mocap.pose() -> tracked, positions, parents, error`
+--- The latest skeleton: positions holds x, y, z for each joint in metres around the hips (y up); parents gives each joint's parent, counting from 1, with 0 for the root. Draw a line from each joint to its parent to see the body.
+function mocap.pose() end
+
+--- `mocap.record(on)`
+--- true starts a new take, false ends it.
+function mocap.record(on) end
+
+--- `mocap.frames() -> count`
+--- Frames in the current take.
+function mocap.frames() end
+
+--- `mocap.take() -> text | nil`
+--- The take as text, for sending to the game's backend with net.backend, which turns it into a .bvh file.
+function mocap.take() end
 
 -- # Saved values
 

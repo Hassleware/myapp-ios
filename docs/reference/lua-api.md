@@ -54,6 +54,12 @@ More in [Web calls](../engine/networking.md), including the safety rules.
 
 ::: lua-api net
 
+## mocap: motion capture (iPhone only)
+
+More in [Motion capture](../engine/mocap.md).
+
+::: lua-api mocap
+
 ## save: values that survive
 
 ::: lua-api save
