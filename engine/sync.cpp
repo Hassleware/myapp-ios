@@ -179,7 +179,10 @@ int exchange(const std::string& host, const std::string& method, const std::stri
     std::string raw;
     char chunk[16384];
     ssize_t n;
-    while ((n = recv(fd, chunk, sizeof(chunk), 0)) > 0 && raw.size() <= maxBytes) raw.append(chunk, (size_t)n);
+    while ((n = recv(fd, chunk, sizeof(chunk), 0)) > 0) {
+        raw.append(chunk, (size_t)n);
+        if (raw.size() > maxBytes && raw.size() - maxBytes > 65536) break;   // far too big; the check below refuses it
+    }
     close(fd);
     size_t split_at = raw.find("\r\n\r\n");
     if (split_at == std::string::npos || raw.compare(0, 5, "HTTP/") != 0) return 0;
