@@ -25,6 +25,7 @@ CHECKPOINT = "checkpoints/sam-3d-body-dinov3/model.ckpt"
 MHR = "checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt"
 FOCAL_MM = 26          # the iPhone 11's wide camera, as a full-frame equivalent
 SMOOTH = 5             # frames in the moving average (odd); 1 turns smoothing off
+FOOT_LOCK = True       # keep a planted foot from sliding (moves the whole body, never the pose)
 FLIP = np.diag([1.0, -1.0, -1.0])   # camera space (y down, z ahead) to y up, facing the camera
 
 
@@ -67,6 +68,45 @@ def smooth(values):
     for t in range(len(values)):
         out[t] = values[max(0, t - half): t + half + 1].mean(axis=0)
     return out
+
+
+def lock_feet(positions, names, fps):
+    """Foot sliding is the usual flaw of video mocap. While a foot is down (low and nearly still), shift the whole
+    body across the floor so that foot stays where it landed. Only the root moves; every joint rotation is kept.
+    Returns the new positions and how far planted feet slid before and after, in mm per second."""
+    feet = [names.index(n) for n in ("l_ball", "r_ball") if n in names]
+    if not feet:
+        return positions, None, None
+    height = positions[:, feet, 1]
+    speed = np.zeros_like(height)
+    speed[1:] = np.linalg.norm(np.diff(positions[:, feet][:, :, [0, 2]], axis=0), axis=2) * fps
+    down = (height < height.min(axis=0) + 0.04) & (speed < 0.6)
+
+    def sliding(p):
+        moved = np.zeros_like(height)
+        moved[1:] = np.linalg.norm(np.diff(p[:, feet][:, :, [0, 2]], axis=0), axis=2) * fps
+        both = down[1:] & down[:-1]
+        return moved[1:][both].mean() * 1000 if both.any() else 0.0
+
+    before = sliding(positions)
+    shift, current, anchor = np.zeros((len(positions), 2)), np.zeros(2), {}
+    for t in range(len(positions)):
+        planted = [k for k in range(len(feet)) if down[t, k]]
+        for k in list(anchor):
+            if k not in planted:
+                del anchor[k]
+        if planted:
+            k = min(planted, key=lambda k: speed[t, k])
+            foot = positions[t, feet[k]][[0, 2]]
+            if k not in anchor:
+                anchor[k] = foot + current
+            current = anchor[k] - foot
+        shift[t] = current
+    shift = smooth(shift[:, None, :])[:, 0, :]   # no sudden jumps when the planted foot changes
+    locked = positions.copy()
+    locked[:, :, 0] += shift[:, None, 0]
+    locked[:, :, 2] += shift[:, None, 1]
+    return locked, before, sliding(locked)
 
 
 def orthonormal(rotations):
@@ -142,6 +182,10 @@ def main():
     # Feet on the floor (y = 0) and the take starting at the middle of the room.
     shift = np.array([positions[0, 0, 0], positions[:, :, 1].min(), positions[0, 0, 2]])
     positions = positions - shift
+    if FOOT_LOCK:
+        positions, before, after = lock_feet(positions, names, fps)
+        if before is not None:
+            print(f"foot sliding while planted: {before:.0f} mm/s before locking, {after:.0f} mm/s after", flush=True)
     write_bvh(prefix + "-sam3d.bvh", positions, rotations, parents, names, fps)
 
     # The phone's replay: every other frame at centimetre precision keeps a minute's take under 2 MB.
