@@ -109,6 +109,46 @@ The platform code is short. Windows uses WinHTTP:
 
 The iPhone side is `ios/http.mm`, walked through on the [Objective-C++](../languages/objc.md) page.
 
+## The game's own backend
+
+A game can have server code of its own: a leaderboard, accounts, matchmaking, saved progress. It is Python, it lives in **`backends/<game>/server.py`**, and while you develop it runs **on your PC**, inside `dev.py`. It is never sent to the phone or put inside an app.
+
+```
+python tools/dev.py backend coin-dash
+```
+
+creates the file from a template with a working leaderboard. The game calls it with `net.backend`, which takes a `path` where `net.request` takes a `url`:
+
+```lua
+net.backend({ path = "/scores", method = "POST", body = '{"name":"Ann","score":42}' }, function(status, body, err) end)
+net.backend({ path = "/scores" }, function(status, body, err)
+  if status == 200 then print(body) end      -- [{"name": "Ann", "score": 42}]
+end)
+```
+
+The game never says where the server is. The engine decides:
+
+| Build | `net.backend` goes to | How |
+|---|---|---|
+| PC | `backends/<game>/server.py` | `http://127.0.0.1:8765/backend/<game>/...`, answered by `dev.py` |
+| Loader on the phone | The same file, on your PC | Through the connection sync already has to `dev.py`, so iOS needs no plain-http exception |
+| Standalone release | `game.cfg`'s `backend = https://...` | An ordinary HTTPS request, with all the rules above |
+
+The server side is one function:
+
+::: source tools/backend_template.py handle
+
+`dev.py` loads the file again whenever you save it, so a change to the server is as quick as a change to the game. An error in it shows in the `dev.py` window with its traceback, and the game gets a 500. Data goes in `data.db` next to the file, which git ignores.
+
+How `dev.py` passes a call on:
+
+::: source tools/dev.py backend_module
+
+!!! warning "What the development link is and is not"
+    The path from the phone to `dev.py` is plain HTTP on your own Wi-Fi, like the file sync. That is fine for development. Players never use it: a release build only knows the HTTPS address in `game.cfg`. Plain `http://` stays refused for `net.request`; only `net.backend`, whose address the engine builds itself, can reach the dev PC.
+
+**For a release**, the same `server.py` runs on its own (`python server.py 8080`) on a server you rent, behind HTTPS, and `game.cfg` gets its address. This path is **not yet tested**. A real deployment also wants a production web server in front and backups of the database.
+
 ## JSON
 
 The engine has no JSON functions, and needs none. JSON libraries exist in pure Lua: put one (for example rxi's `json.lua`) next to `main.lua` and
@@ -137,7 +177,7 @@ What an app *may* hold is what one player's own login gives it: a token that onl
 | Uploading or downloading files | Bodies are strings in memory |
 | Secure token storage | See above |
 | HTTPS on the Linux build | Requests answer with an error there |
-| Plain HTTP to a server on your own PC | Refused, like all `http://`. A development backend needs either an HTTPS tunnel or an engine change |
+| Plain HTTP to arbitrary servers | Refused. The game's own backend on your PC is reached with `net.backend` instead |
 
 ## Exercises
 

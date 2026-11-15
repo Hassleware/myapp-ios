@@ -12,7 +12,7 @@ The engine is a small C++ program built on three libraries: **SDL3** for the win
 | `engine/collide.cpp` | `collide` | Collision shapes and the questions asked about them |
 | `engine/audio.cpp` | `audio` | Mixing sound |
 | `engine/input.cpp` | `input` | Touch, sticks and buttons, sensors, game pads, the keyboard |
-| `engine/net.cpp` | `net` | HTTPS requests, and every safety rule on them |
+| `engine/net.cpp` | `net` | HTTPS requests, calls to the game's own backend, and every safety rule on them |
 | `engine/script.cpp` | `script` | Running a game's Lua and giving it the API |
 | `engine/sync.cpp` | `devsync` | Loader only: fetching changed game files from the PC |
 | `engine/pool.h` | | The handle pool every subsystem uses |

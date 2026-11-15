@@ -16,6 +16,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -155,11 +156,13 @@ std::string url_encode(const std::string& path) {
     return out;
 }
 
-bool request(const std::string& host, const std::string& method, const std::string& target, const std::string& body, std::string& response) {
+// Sends one request and reads the whole reply. Returns the HTTP status, or 0 if the PC could not be reached.
+int exchange(const std::string& host, const std::string& method, const std::string& target, const std::string& headers,
+             const std::string& body, std::string& response, size_t maxBytes = (size_t)-1) {
     int fd = connect_to(host, 1500);
-    if (fd < 0) return false;
-    std::string message = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\nContent-Length: " +
-                          std::to_string(body.size()) + "\r\n\r\n" + body;
+    if (fd < 0) return 0;
+    std::string message = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n" + headers +
+                          "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     int sendFlags = 0;
 #ifdef MSG_NOSIGNAL
     sendFlags = MSG_NOSIGNAL;
@@ -169,19 +172,25 @@ bool request(const std::string& host, const std::string& method, const std::stri
         ssize_t n = send(fd, message.data() + sent, message.size() - sent, sendFlags);
         if (n <= 0) {
             close(fd);
-            return false;
+            return 0;
         }
         sent += (size_t)n;
     }
     std::string raw;
     char chunk[16384];
     ssize_t n;
-    while ((n = recv(fd, chunk, sizeof(chunk), 0)) > 0) raw.append(chunk, (size_t)n);
+    while ((n = recv(fd, chunk, sizeof(chunk), 0)) > 0 && raw.size() <= maxBytes) raw.append(chunk, (size_t)n);
     close(fd);
     size_t split_at = raw.find("\r\n\r\n");
-    if (split_at == std::string::npos || raw.compare(0, 12, "HTTP/1.1 200") != 0) return false;
+    if (split_at == std::string::npos || raw.compare(0, 5, "HTTP/") != 0 || raw.size() > maxBytes + split_at + 4) return 0;
+    size_t space = raw.find(' ');
+    int status = space < split_at ? atoi(raw.c_str() + space + 1) : 0;
     response = raw.substr(split_at + 4);
-    return true;
+    return status;
+}
+
+bool request(const std::string& host, const std::string& method, const std::string& target, const std::string& body, std::string& response) {
+    return exchange(host, method, target, "", body, response) == 200;
 }
 
 bool get(const std::string& host, const std::string& target, std::string& response) { return request(host, "GET", target, "", response); }
@@ -443,6 +452,25 @@ std::string available_build() {
 std::string update_url() {
     std::lock_guard<std::mutex> guard(lock);
     return "http://" + serverHost + ":" + std::to_string(PORT) + "/app/GameLab.ipa";
+}
+
+int backend(const std::string& method, const std::string& path, const std::vector<std::pair<std::string, std::string>>& headers,
+            const std::string& body, int timeoutSeconds, size_t maxBytes, std::string& response, std::string& error) {
+    std::string host;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        host = serverHost;
+    }
+    if (host.empty()) {
+        error = "not connected to the dev PC yet (is python tools/dev.py running?)";
+        return 0;
+    }
+    std::string lines;
+    for (const auto& h : headers) lines += h.first + ": " + h.second + "\r\n";   // net.cpp has refused line breaks already
+    (void)timeoutSeconds;   // ponytail: the sync connection's own 5 second limit applies
+    int status = exchange(host, method, path, lines, body, response, maxBytes);
+    if (!status) error = "the dev PC did not answer";
+    return status;
 }
 
 void log(const char* level, const std::string& game, const std::string& message) {

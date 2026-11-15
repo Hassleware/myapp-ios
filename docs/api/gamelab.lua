@@ -424,6 +424,10 @@ function input.copy(text) end
 --- Calls a web API. Returns at once; the function is called later with status and body, or with nil, nil and a message. Only https, and only hosts named in the game's game.cfg.
 function net.request(options, callback) end
 
+--- `net.backend({ path = "/scores", method = "GET", headers = {}, body =, timeout = 15 }, function(status, body, err) ... end)`
+--- Calls this game's own backend. While developing, that is backends/<game>/server.py, run by dev.py on your PC; in a standalone release, the address in game.cfg's backend line. The game never names a host.
+function net.backend(options, callback) end
+
 -- # Saved values
 
 --- `save.get(key, default) -> value`

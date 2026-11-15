@@ -11,6 +11,7 @@ namespace net {
 
 struct Request {
     std::string method = "GET", url, body;
+    bool backend = false;   // url is a path on this game's own backend, such as "/scores"
     std::vector<std::pair<std::string, std::string>> headers;
     float timeout = 15;   // seconds
 };
@@ -23,6 +24,10 @@ struct Response {
 
 // The hosts a game may call, from its game.cfg line  hosts = api.example.com other.org  (subdomains included).
 void set_hosts(const std::string& list);
+
+// The game's own backend. While developing (the PC build and the loader) it is backends/<game>/server.py,
+// reached through dev.py on the PC. In a standalone release it is game.cfg's  backend = https://...  address.
+void set_backend(const std::string& game, const std::string& releaseUrl);
 
 // Empty if the request is allowed, otherwise why not. Checked again by send.
 std::string check(const Request& request);

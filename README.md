@@ -19,6 +19,7 @@ python tools/dev.py               watch the repo and serve the phone; type comma
 python tools/dev.py run net-demo    build the PC version and play a game
 python tools/dev.py ship "msg"    commit, push, build the phone app, fetch it to this PC
 python tools/dev.py status        what is out of date and what to do
+python tools/dev.py backend coin-dash   give a game its own server code (backends/coin-dash/server.py)
 python tools/dev.py docs          serve the handbook (docs/) with live rebuild
 python tools/dev.py check net-demo  play a game inside every iPhone shape and list what each phone would hide
 ```
@@ -121,6 +122,7 @@ input.paste() -> text       input.copy(text)         -- the clipboard. iOS asks 
 
 -- the internet (https only, and only hosts listed in game.cfg)
 net.request({ url=, method="GET", headers={}, body=, timeout=15 }, function(status, body, err) ... end)
+net.backend({ path="/scores", ... }, function(status, body, err) ... end)   -- this game's own server (see below)
 
 -- everything else
 save.get(key, default)      save.set(key, value)
@@ -134,6 +136,8 @@ include("other.lua")        print(...)   -- prints show in the dev.py window, fr
 A game may have a `game.cfg` with a line `orientation = landscape` (or `portrait`) to stop the phone turning it, and a line `hosts = api.example.com other.org` naming the web hosts it may call.
 
 **Typing.** `input.keyboard(true, kind)` brings the keyboard up; typed and pasted text arrives through `on_text`, and backspace and return through `on_key`. The game keeps the string and draws it itself (draw dots for a password). Kind `"code"` shows digits and lets iOS offer a one-time code that has just arrived by SMS. Draw text fields in the top half of the screen: the keyboard covers the bottom half.
+
+**A game's own backend.** `python tools/dev.py backend <game>` creates `backends/<game>/server.py`: Python that runs on your PC inside `dev.py`, never on the phone. The game calls it with `net.backend({ path = "/scores" }, callback)`; the engine works out where it is (your PC while developing, the `backend = https://...` line of `game.cfg` in a release). Save the file and the next call uses the new code. Its data goes in `backends/<game>/data.db`, which git ignores.
 
 **Web calls.** `net.request` returns at once and calls your function later with `status, body` or with `nil, nil, err`. The engine refuses anything that is not `https://`, any host not listed in `game.cfg` (subdomains of a listed host are allowed), redirects, bodies over 1 MB, answers over 4 MB and more than 8 requests at once. Certificates are always checked and no cookies are kept. For JSON, drop a pure-Lua JSON file (for example rxi's `json.lua`) next to `main.lua` and `include` it. Never put a secret API key in a game: anyone can unzip an app and read it. Keys belong on a server of yours; the app should only hold what a player's own login gives it. `save.set` writes a plain file, so it is not the place for a long-lived login token (see the note in `CLAUDE.md`).
 

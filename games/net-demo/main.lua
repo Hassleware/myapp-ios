@@ -48,7 +48,7 @@ function update()
 end
 
 function draw()
-  gfx.clear(0.08, 0.09, 0.13)
+  gfx.clear(0.1, 0.2, 0.4)
   local x, y, width = layout()
   gfx.rect(x, y, width, 90, 0.16, 0.18, 0.25)
   local cursor = input.keyboard() and sys.real_time() % 1 < 0.5 and "_" or ""

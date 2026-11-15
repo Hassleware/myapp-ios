@@ -1,6 +1,9 @@
 // HTTPS requests. The rules in net.h are checked here, in one place, before the platform's own HTTP code is used:
 // WinHTTP on Windows, NSURLSession (ios/http.mm) on the iPhone. Both check certificates by default and that is left alone.
 #include "net.h"
+#if defined(LOADER_SYNC)
+#include "sync.h"
+#endif
 
 #include <atomic>
 #include <cctype>
@@ -30,6 +33,7 @@ const size_t MAX_RECEIVE = 4 << 20;   // 4 MB down
 const int MAX_IN_FLIGHT = 8;
 
 std::vector<std::string> hosts;
+std::string gameName, releaseBackend;
 std::mutex lock;
 // Never freed: a request still running when the app quits must have somewhere to put its answer.
 std::vector<Response>* finished = new std::vector<Response>;
@@ -39,15 +43,22 @@ int nextId = 1;
 struct Target {
     std::string host, path = "/";
     int port = 443;
+    bool secure = true;
 };
+
+// No spaces, control characters, backslashes or non-ASCII: anything odd is refused rather than guessed at.
+bool plain_text(const std::string& s) {
+    for (unsigned char c : s)
+        if (c <= 0x20 || c >= 0x7f || c == '\\') return false;
+    return true;
+}
 
 // Takes a URL apart strictly. Anything odd is refused rather than guessed at, so that this code and the
 // platform's own URL reader can never disagree about which host a request goes to.
 std::string parse(const std::string& url, Target& out) {
     const std::string scheme = "https://";
     if (url.compare(0, scheme.size(), scheme) != 0) return "only https:// addresses are allowed";
-    for (unsigned char c : url)
-        if (c <= 0x20 || c >= 0x7f || c == '\\') return "the address has a space or an unusual character (encode it with %XX)";
+    if (!plain_text(url)) return "the address has a space or an unusual character (encode it with %XX)";
     size_t end = url.find_first_of("/?#", scheme.size());
     std::string authority = url.substr(scheme.size(), end == std::string::npos ? std::string::npos : end - scheme.size());
     if (authority.find('@') != std::string::npos) return "the address must not contain a user name";
@@ -78,9 +89,25 @@ bool host_allowed(const std::string& host) {
 }
 
 std::string check_target(const Request& r, Target& target) {
-    std::string problem = parse(r.url, target);
-    if (!problem.empty()) return problem;
-    if (!host_allowed(target.host)) return "'" + target.host + "' is not in this game's game.cfg (add a line: hosts = " + target.host + ")";
+    if (r.backend) {
+        // A path on the game's own backend. The engine, not the game, decides where that is.
+        if (r.url.empty() || r.url[0] != '/' || !plain_text(r.url)) return "a backend path starts with / and has no spaces or unusual characters";
+#if defined(SINGLE_GAME)
+        if (releaseBackend.empty()) return "this game's game.cfg has no  backend = https://...  line for the release build";
+        std::string problem = parse(releaseBackend + r.url, target);
+        if (!problem.empty()) return problem;
+#else
+        // ponytail: plain http, to the dev PC only (127.0.0.1 here; the loader reaches it through sync.cpp).
+        target.host = "127.0.0.1";
+        target.port = 8765;
+        target.secure = false;
+        target.path = "/backend/" + gameName + r.url;
+#endif
+    } else {
+        std::string problem = parse(r.url, target);
+        if (!problem.empty()) return problem;
+        if (!host_allowed(target.host)) return "'" + target.host + "' is not in this game's game.cfg (add a line: hosts = " + target.host + ")";
+    }
     if (r.method != "GET" && r.method != "POST" && r.method != "PUT" && r.method != "PATCH" && r.method != "DELETE") return "unknown method '" + r.method + "'";
     if (r.body.size() > MAX_SEND) return "the body is over 1 MB";
     for (const auto& h : r.headers) {
@@ -106,7 +133,7 @@ void fetch(const Request& r, const Target& t, Response& out) {
     HINTERNET session = WinHttpOpen(L"GameLab", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     HINTERNET connection = session ? WinHttpConnect(session, wide(t.host).c_str(), (INTERNET_PORT)t.port, 0) : nullptr;
     HINTERNET request = connection ? WinHttpOpenRequest(connection, wide(r.method).c_str(), wide(t.path).c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                        WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
+                                                        WINHTTP_DEFAULT_ACCEPT_TYPES, t.secure ? WINHTTP_FLAG_SECURE : 0) : nullptr;
     bool ok = request != nullptr;
     if (ok) {
         WinHttpSetTimeouts(request, ms, ms, ms, ms);
@@ -139,7 +166,14 @@ void fetch(const Request& r, const Target& t, Response& out) {
     if (session) WinHttpCloseHandle(session);
 }
 #elif defined(__APPLE__)
-void fetch(const Request& r, const Target&, Response& out) {
+void fetch(const Request& r, const Target& t, Response& out) {
+#if defined(LOADER_SYNC)
+    if (!t.secure) {
+        out.status = devsync::backend(r.method, t.path, r.headers, r.body, (int)r.timeout, MAX_RECEIVE, out.body, out.error);
+        return;
+    }
+#endif
+    std::string url = r.backend ? "https://" + t.host + (t.port == 443 ? "" : ":" + std::to_string(t.port)) + t.path : r.url;
     std::vector<const char*> headers;
     for (const auto& h : r.headers) {
         headers.push_back(h.first.c_str());
@@ -148,7 +182,7 @@ void fetch(const Request& r, const Target&, Response& out) {
     char* data = nullptr;
     size_t size = 0;
     char error[256] = "";
-    out.status = gamelab_http(r.method.c_str(), r.url.c_str(), headers.data(), (int)r.headers.size(), r.body.data(), r.body.size(),
+    out.status = gamelab_http(r.method.c_str(), url.c_str(), headers.data(), (int)r.headers.size(), r.body.data(), r.body.size(),
                               r.timeout, MAX_RECEIVE, &data, &size, error, sizeof(error));
     if (out.status) out.body.assign(data ? data : "", size);
     else out.error = error[0] ? error : "the request failed";
@@ -190,11 +224,25 @@ void self_check() {
     r.headers.clear();
     r.method = "CONNECT";
     expect(true, r);
+    Request b;
+    b.backend = true;
+    b.url = "/scores?top=10";
+    expect(false, b);
+    b.url = "scores";                                         // must start with /
+    expect(true, b);
+    b.url = "/a b";
+    expect(true, b);
     hosts.clear();
     fprintf(stderr, failures ? "net self-check: %d FAILED\n" : "net self-check passed\n", failures);
 }
 
 }  // namespace
+
+void set_backend(const std::string& game, const std::string& releaseUrl) {
+    gameName = game;
+    releaseBackend = releaseUrl;
+    while (!releaseBackend.empty() && releaseBackend.back() == '/') releaseBackend.pop_back();
+}
 
 void set_hosts(const std::string& list) {
     static bool checked = getenv("GAMELAB_NET_CHECK") ? (self_check(), true) : false;

@@ -157,6 +157,7 @@ void start_game(const std::string& name) {
     release_assets(dir);
     apply_orientation(config_value(dir, "orientation"));
     net::set_hosts(config_value(dir, "hosts"));
+    net::set_backend(name, config_value(dir, "backend"));
     script::load(dir, savesDir + "/" + name + ".txt");
     watchStamp = folder_stamp(dir);
 }

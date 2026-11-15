@@ -11,6 +11,7 @@ Run as `python tools/dev.py <command>`.
 | *(none)* | Watch the repository, serve the phone, and show a prompt |
 | `run [game]` | Build the PC version and play a game. With no game, shows the game list |
 | `new <name>` | Create a game from the template. Names are lowercase letters, digits and dashes |
+| `backend <game>` | Give a game its own server code in `backends/<game>/server.py`. See [Web calls](../engine/networking.md#the-games-own-backend) |
 | `ship [message]` | Commit, push, wait for the iPhone build, fetch it for the phone |
 | `status` | What is out of date, and the command that fixes each thing |
 | `check <game>` | Play a game inside every iPhone shape and list what each would hide |
@@ -38,6 +39,7 @@ The tool serves plain text over HTTP on port **8765**. The loader app is the onl
 | `GET /files/<game>/<path>` | The file's contents |
 | `GET /app/GameLab.ipa` | The newest app build, saved by Safari as `GameLab-<build code>.ipa` |
 | `POST /api/log` | Body `level<TAB>game<TAB>message`. Shown in the tool's window |
+| Any method on `/backend/<game>/<path>` | Passed to `handle()` in `backends/<game>/server.py`, and its answer returned |
 
 The handler:
 

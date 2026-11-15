@@ -49,7 +49,9 @@ docs/               the handbook (MkDocs + Material): onboarding, a tutorial per
 docs/hooks.py       pulls real code into pages by name and checks the Lua API description against script.cpp
 docs/api/gamelab.lua  every Lua function described once: feeds the handbook, the drift check and VS Code (.luarc.json)
 mkdocs.yml          the handbook's settings and menu
-tools/template/     what `new <name>` copies: main.lua and lib.lua (the Lua-side helper library)
+tools/template/     what `new <name>` copies: an empty main.lua with every callback, lib.lua, a commented game.cfg
+tools/backend_template.py   what `backend <game>` copies to backends/<game>/server.py (a working leaderboard)
+backends/<game>/    each game's own server code (Python). Runs inside dev.py on the PC; never synced or bundled
 .github/workflows/build.yml   iPhone build
 ```
 
@@ -99,6 +101,13 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - Left out on purpose, add when needed: response headers, a Keychain-backed `secret` store for login tokens (`save` is a plain file), certificate pinning, uploads and downloads to files, WebSockets, HTTPS on the Linux build, moving the view up when the keyboard covers a field.
 - The Wi-Fi sync between `dev.py` and the loader is plain HTTP with no login. That is acceptable on a home network for development only, and is one more reason release builds contain no sync code.
 
+### Game backends (added 15 November 2026)
+
+- `net.backend({path=...}, cb)` goes to the game's own backend; the game never names a host. In dev builds `net.cpp` points it at `dev.py` (`/backend/<game>/<path>`): on the PC over WinHTTP to 127.0.0.1:8765, in the loader through `devsync::backend`, which uses sync's own POSIX socket client, so **iOS needs no ATS plain-http exception**. In `SINGLE_GAME` builds it is `game.cfg`'s `backend = https://...` plus the path, through the normal HTTPS rules (that host is allowed automatically).
+- `dev.py` loads `backends/<game>/server.py` with importlib, reloads it when its modified time changes, and calls `handle(method, path, query, body, headers)` under one lock. Errors print with a traceback and return 500. The file also runs on its own (`python server.py 8080`) for a real deployment, which is **untested**.
+- `net.request` still refuses all plain `http://`. Only the engine-built backend address may be plain http, and only in dev builds.
+- **Untested on the phone**: the loader path through `devsync::backend` has only been compiled by the GitHub build. Tested on the PC: `dev.py` routing (store, list, 404, a backend error) and the engine reaching `127.0.0.1:8765` over plain http.
+
 ### The handbook (added 14 November 2026)
 
 - `python tools/dev.py docs` serves it on port 8766 with live rebuild; `docs` at the prompt does the same in the background. It needs `pip install mkdocs-material`, the one non-standard-library dependency in the repo, and only for the handbook.
@@ -127,6 +136,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 | Private build flow: artifact upload, `gh run download`, `/app/GameLab.ipa` served to the phone | Tested |
 | Updating the app on the phone | Game Lab is installed **inside LiveContainer**. `sidestore://install` failed (bundle mismatch) and `livecontainer://install` failed ("LiveContainer must refresh to install apps": it won't install while an app runs inside it). The working route, **tested**: DOWNLOAD UPDATE (Safari saves the IPA), then **+** in LiveContainer. Don't retry in-app install links |
 | Keyboard, clipboard and `net.request` (14 November 2026) | Tested on the PC: typing, backspace, a real HTTPS call, a 404, and refusals of plain http and unlisted hosts. **Untested on the phone**: `ios/http.mm` has never been compiled on the PC, the on-screen keyboard, the SMS code suggestion, the paste permission prompt |
+| Game backends (15 November 2026) | Tested on the PC: `dev.py` routing and the engine's plain-http call to it. **Untested**: the loader's path to the backend on the phone, and a standalone release with `backend = https://...` |
 | Slang auto-download in `dev.py` (guessed release file name) | **Untested.** The Vulkan SDK's `slangc` is the reliable source |
 | `release <game>` standalone build | **Untested** |
 | App Store signing and upload | **Not built** |

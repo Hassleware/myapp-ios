@@ -1033,12 +1033,14 @@ int l_copy(lua_State* l) {
 std::map<int, int> netCallbacks;   // request id -> the Lua function waiting for its answer
 
 // net.request({url=, method=, headers={}, body=, timeout=}, function(status, body, err) ... end)
-int l_net_request(lua_State* l) {
+// net.backend({path=, ...}, function(status, body, err) ... end): the same, to the game's own backend.
+int send_request(lua_State* l, bool backend) {
     luaL_checktype(l, 1, LUA_TTABLE);
     luaL_checktype(l, 2, LUA_TFUNCTION);
     net::Request request;
+    request.backend = backend;
     size_t size = 0;
-    lua_getfield(l, 1, "url");
+    lua_getfield(l, 1, backend ? "path" : "url");
     request.url = luaL_checkstring(l, -1);
     lua_getfield(l, 1, "method");
     request.method = luaL_optstring(l, -1, "GET");
@@ -1060,6 +1062,9 @@ int l_net_request(lua_State* l) {
     netCallbacks[id] = luaL_ref(l, LUA_REGISTRYINDEX);
     return 0;
 }
+
+int l_net_request(lua_State* l) { return send_request(l, false); }
+int l_net_backend(lua_State* l) { return send_request(l, true); }
 
 int l_platform(lua_State* l) {
 #if defined(SDL_PLATFORM_IOS)
@@ -1182,7 +1187,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
                                        {"touches", l_touches}, {"key", l_key}, {"tilt", l_tilt}, {"gyro", l_gyro}, {"pad", l_pad},
                                        {"haptic", l_haptic}, {"keyboard", l_keyboard}, {"paste", l_paste}, {"copy", l_copy},
                                        {nullptr, nullptr}};
-    const luaL_Reg netFunctions[] = {{"request", l_net_request}, {nullptr, nullptr}};
+    const luaL_Reg netFunctions[] = {{"request", l_net_request}, {"backend", l_net_backend}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
                                      {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};

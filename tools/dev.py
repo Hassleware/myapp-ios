@@ -4,6 +4,7 @@
     python tools/dev.py              watch the repo, serve the phone, and say what each change needs
     python tools/dev.py run <game>   build the PC version and play a game
     python tools/dev.py new <name>   create a game from the template
+    python tools/dev.py backend <game>   give a game its own backend: backends/<game>/server.py, run by this tool
     python tools/dev.py ship [msg]   commit, push, wait for the iPhone build, fetch it for the phone
     python tools/dev.py status       what is out of date, and what to do about it
     python tools/dev.py release <game>   build one game as its own standalone app
@@ -17,6 +18,7 @@ Two kinds of change, and the tool tells you which one you made:
 """
 
 import hashlib
+import importlib.util
 import json
 import os
 import platform
@@ -27,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +39,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 PORT = 8765
 REPO = Path(__file__).resolve().parent.parent
 GAMES = REPO / "games"
+BACKENDS = REPO / "backends"   # backends/<game>/server.py: each game's server code. Runs here, never on the phone
 TOOLS = REPO / "tools"
 STATE_FILE = TOOLS / ".state.json"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -241,6 +245,41 @@ def create_game(name):
             f"  Play it on the PC with: python tools/dev.py run {name}")
 
 
+def create_backend(name):
+    if name not in game_names():
+        return f"No game called '{name}'. Type: list"
+    target = BACKENDS / name / "server.py"
+    if target.exists():
+        return f"backends/{name}/server.py already exists."
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(TOOLS / "backend_template.py", target)
+    return (f"Created backends/{name}/server.py. While this tool runs, the game reaches it with\n"
+            f'  net.backend({{ path = "/scores" }}, function(status, body, err) ... end)')
+
+
+# ---------------------------------------------------------------- game backends
+
+_backends = {}                       # game -> (modified time, module)
+_backend_lock = threading.Lock()     # ponytail: one backend call at a time. Plenty for one developer
+
+
+def backend_module(game):
+    """backends/<game>/server.py, loaded again whenever the file is saved."""
+    path = BACKENDS / game / "server.py"
+    if not NAME_RE.match(game) or not path.is_file():
+        return None
+    stamp = path.stat().st_mtime
+    cached = _backends.get(game)
+    if cached and cached[0] == stamp:
+        return cached[1]
+    spec = importlib.util.spec_from_file_location("backend_" + game.replace("-", "_"), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    _backends[game] = (stamp, module)
+    say(f"  [backend] loaded backends/{game}/server.py")
+    return module
+
+
 # ---------------------------------------------------------------- server for the phone
 
 _lock = threading.Lock()
@@ -281,7 +320,27 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def backend(self):
+        """/backend/<game>/<path>: hands the call to that game's server.py."""
+        url = urlparse(self.path)
+        parts = url.path.split("/")
+        game, path = parts[2] if len(parts) > 2 else "", "/" + "/".join(parts[3:])
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
+        try:
+            with _backend_lock:
+                module = backend_module(game)
+                if not module:
+                    return self.reply(f"No backend for '{game}'. Create one with: python tools/dev.py backend {game}\n", 404)
+                status, text, *kind = module.handle(self.command, path, parse_qs(url.query), body, dict(self.headers))
+        except Exception:
+            say(f"  [backend {game}] ERROR in {self.command} {path}:\n" + traceback.format_exc().rstrip())
+            return self.reply("The backend failed. The error is in the dev.py window.\n", 500)
+        self.reply(text, status, kind[0] if kind else "application/json")
+
     def do_GET(self):
+        if self.path.startswith("/backend/"):
+            return self.backend()
         url = urlparse(self.path)
         parts = [unquote(p) for p in url.path.split("/") if p]
         if parts == ["api", "hello"]:
@@ -310,7 +369,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(target.read_bytes(), kind="application/octet-stream")
         self.reply("Not found", 404)
 
+    def do_PUT(self):
+        self.backend() if self.path.startswith("/backend/") else self.reply("Not found", 404)
+
+    do_PATCH = do_DELETE = do_PUT
+
     def do_POST(self):
+        if self.path.startswith("/backend/"):
+            return self.backend()
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode("utf-8", "replace") if length else ""
         if urlparse(self.path).path == "/api/log":
@@ -719,6 +785,7 @@ def cmd_docs(background=False):
 HELP = """Commands:
   run <game>     build the PC version and play a game (run on its own shows the game list)
   new <name>     create a game from the template
+  backend <game> give a game its own server code, in backends/<game>/server.py
   play <game>    open a game on the phone          menu     back to the phone's game list
   reload         restart the game on the phone     list     show all games
   status         what is out of date               ship [message]   build a new app for the phone
@@ -740,6 +807,8 @@ def console():
         rest = rest.strip()
         if word == "new" and rest:
             say(create_game(rest))
+        elif word == "backend" and rest:
+            say(create_backend(rest))
         elif word == "play" and rest:
             if rest in game_names():
                 send_command("play", rest)
@@ -809,6 +878,8 @@ def main():
         cmd_run(args[1] if len(args) > 1 else None)
     elif command == "new" and len(args) > 1:
         say(create_game(args[1]))
+    elif command == "backend" and len(args) > 1:
+        say(create_backend(args[1]))
     elif command == "ship":
         cmd_ship(" ".join(args[1:]) or None)
     elif command == "status":

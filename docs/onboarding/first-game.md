@@ -13,14 +13,15 @@ new coin-dash
 run coin-dash
 ```
 
-`new` copies the template into `games/coin-dash/`. You get two files:
+`new` copies the template into `games/coin-dash/`. You get three files:
 
 | File | What it is |
 |---|---|
 | `main.lua` | Your game. The engine runs this file |
 | `lib.lua` | Helpers written in Lua (timers, state machines, vector maths). It is yours to edit. See [lib.lua helpers](../reference/lib.md) |
+| `game.cfg` | Settings read before the game starts: orientation, web hosts, the release backend. All commented out to begin with. See [game.cfg](../reference/game-cfg.md) |
 
-This is the template you are starting from:
+This is the template you are starting from: every function the engine calls, empty, and a title drawn in the middle of the screen.
 
 ::: file tools/template/main.lua
 
@@ -147,7 +148,7 @@ This plays the game inside twelve iPhone shapes, upright and sideways, and lists
 ## 7. Try these yourself
 
 ??? example "Exercise: lock the game to landscape"
-    Create `games/coin-dash/game.cfg` containing one line:
+    In `games/coin-dash/game.cfg`, remove the `#` from the orientation line and change it to:
 
     ```ini
     orientation = landscape
@@ -167,10 +168,17 @@ This plays the game inside twelve iPhone shapes, upright and sideways, and lists
     Volumes are in decibels: `0` is full, `-6` about half. See [Audio](../engine/audio.md).
 
 ??? example "Exercise: add a jump button"
-    Add a second entry to `input.controls` with `type = "button"`, an `id`, and `key = "space"` so it works on the PC. Read it with `input.pressed("jump")`. The template you replaced in step 3 shows the whole pattern.
+    Add a second entry to `input.controls`:
+
+    ```lua
+    { type = "button", id = "jump", x = 0.88, y = 0.76, size = 0.10, label = "A", key = "space" },
+    ```
+
+    `key = "space"` makes it work on the PC too. Read it with `input.pressed("jump")`.
 
 ## Where to go from here
 
 - [Lua (gameplay)](../languages/lua.md) if Lua is new to you.
 - [Lua API](../reference/lua-api.md) for everything the engine offers.
 - [Slang (shaders)](../languages/slang.md) to change how things look.
+- [Web calls](../engine/networking.md#the-games-own-backend) to give the game a leaderboard: `python tools/dev.py backend coin-dash`.
