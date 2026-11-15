@@ -65,6 +65,7 @@ GitHub Actions runs a list of steps on a machine GitHub provides. Ours asks for 
 
 | Step | Why it exists |
 |---|---|
+| Test the phone's link to dev.py | Compiles `engine/sync.cpp` with `tests/sync_test.cpp` and runs it against a real `dev.py`: connecting, downloading files, removing deleted games, backend calls, the size limit. A failure stops the build, so a broken sync never reaches the phone |
 | Download MoltenVK | The iPhone has no Vulkan. MoltenVK is linked into the app |
 | Work out what to build | Computes the build code by running `dev.py fingerprint`, and chooses loader or standalone |
 | Reuse the last build folder | Most of a fresh build is setting up SDL3. Keeping the folder between runs skips that |

@@ -120,6 +120,7 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 
 ### Small traps already hit
 
+- **`tests/sync_test.cpp` runs on every GitHub build, before the app is built**: it compiles `sync.cpp` on the Mac and checks it against a real `dev.py` (connect, download byte for byte, remove a deleted game, backend call, status pass-through, size limit). Added on 15 November 2026 after build c4c6d822 shipped a size check that overflowed and silently broke all sync (fixed in 6d901abd; that bug also meant the phone could not see DOWNLOAD UPDATE, so the fix had to be fetched in Safari from `http://<pc>:8765/app/GameLab.ipa`). The test then caught a second bug (part of a reply dropped), fixed in bd5c393c. Extend it whenever `sync.cpp` changes.
 - The sync namespace is `devsync`, because `sync` collides with a POSIX function.
 - Lua on iOS needs `LUA_USE_IOS` (there is no `system()`). Games get only the base, table, string, math, utf8 and coroutine libraries; files are read with `include("file.lua")`.
 - Windows prints a `ConnectionResetError` traceback when the phone's network scan hangs up. `QuietServer` in `dev.py` suppresses that.
