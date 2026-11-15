@@ -134,18 +134,48 @@ def orthonormal(rotations):
     return u @ vt
 
 
-def main():
-    video, prefix = sys.argv[1], sys.argv[2]
-    hands = len(sys.argv) > 3 and sys.argv[3] == "hands"
+def load():
+    """The model and the person detector. About 10 s, so the worker below does it once for many takes."""
     sys.path.insert(0, ".")   # SAM 3D Body's own code, from the folder this runs in
     stage("loading SAM 3D Body")
     from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
     from ultralytics import YOLO
 
     model, cfg = load_sam_3d_body(CHECKPOINT, device="cuda", mhr_path=MHR)
-    estimator = SAM3DBodyEstimator(sam_3d_body_model=model, model_cfg=cfg)
-    detector = YOLO("checkpoints/yolov8x.pt")
+    return model, SAM3DBodyEstimator(sam_3d_body_model=model, model_cfg=cfg), YOLO("checkpoints/yolov8x.pt")
 
+
+def main():
+    video, prefix = sys.argv[1], sys.argv[2]
+    process(video, prefix, len(sys.argv) > 3 and sys.argv[3] == "hands", *load())
+
+
+def serve(idle_seconds=600):
+    """Worker mode (run_take.py serve): loads once, then takes jobs from stdin, one a line: video TAB prefix TAB hands.
+    Answers each with STAGE lines then "JOB DONE" or "JOB FAILED <why>". Quits after idle_seconds with no job, so
+    the graphics card's memory isn't held all evening."""
+    import select
+    import traceback
+
+    loaded = load()
+    print("WORKER READY", flush=True)
+    while True:
+        ready, _, _ = select.select([sys.stdin], [], [], idle_seconds)
+        line = sys.stdin.readline() if ready else ""
+        if not line:
+            print("WORKER IDLE, quitting", flush=True)
+            return
+        video, prefix, hands = (line.rstrip("\r\n").split("\t") + ["", "", ""])[:3]
+        try:
+            process(video, prefix, hands == "hands", *loaded)
+            print("JOB DONE", flush=True)
+        except Exception as problem:
+            for row in traceback.format_exc().splitlines()[-12:]:
+                print("  " + row, flush=True)
+            print(f"JOB FAILED {problem}", flush=True)
+
+
+def process(video, prefix, hands, model, estimator, detector):
     reader = cv2.VideoCapture(video)
     fps = reader.get(cv2.CAP_PROP_FPS) or 30
     total = int(reader.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -269,4 +299,4 @@ def write_bvh(path, positions, rotations, parents, names, fps):
 
 
 if __name__ == "__main__":
-    main()
+    serve() if sys.argv[1:] == ["serve"] else main()

@@ -133,6 +133,8 @@ Dependencies are fetched by CMake `FetchContent`: SDL3 `release-3.4.20`, Lua `v5
 - GVHMR stays installed (`tools/gvhmr`); it only lacks `SMPLX_NEUTRAL.npz`.
 - Speed on the RTX 5080: about 10 s to load the model, YOLO 15 ms a frame, SAM 3D Body 166 ms a frame body-only (the default) or 664 ms with the hand pass (the phone's HANDS button sends `&hands=1`). bfloat16 autocast fails (a sparse op), so it runs in float32.
 - `FOOT_LOCK` in `run_take.py` shifts the root while a foot (`l_ball` / `r_ball`) is planted: sliding 140 to 93 mm/s on the sample clip, joint rotations untouched.
+- The backend keeps one **worker** (`run_take.py serve`) with the model loaded: jobs go one a line on its stdin, it answers with STAGE lines and `JOB DONE` / `JOB FAILED`, and quits after 10 idle minutes or when `dev.py` closes. Kept on `sys` so a reload of `server.py` reuses it. Second take of the sample clip: 17 s against 43 s cold.
+- Defaults in `run_take.py`: `SIMPLE` (81 bones: drops 40 MHR twist helpers, tongue, teeth), `FOOT_LOCK`, `SMOOTH = 5` moving average. A One Euro filter was tried and measured worse at every setting (more shake at equal fidelity), so it was removed; each take prints its jitter numbers for tuning.
 - `tools/blender_import_take.py` imports the newest take into Blender with the right axes, scale and frame rate. Tested headless in Blender 4.4: 127 bones, feet on the floor, positions matching the PC's to a centimetre.
 
 ### The handbook (added 14 November 2026)

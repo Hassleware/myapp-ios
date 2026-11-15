@@ -19,6 +19,7 @@ import json
 import math
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -131,26 +132,58 @@ def set_status(name, **fields):
     (CAPTURES / f"{name}.job.json").write_text(json.dumps(fields))
 
 
+def start_worker():
+    """SAM 3D Body in WSL, loaded once and kept for the next takes (tools/sam3d/run_take.py serve). It quits by
+    itself after 10 idle minutes and is started again when needed. Kept on sys so a reload of this file reuses it."""
+    worker = getattr(sys, "_gamelab_mocap_worker", None)
+    if worker is None or worker.poll() is not None:
+        command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate sam3d && cd ~/sam-3d-body && "
+                   f"python '{wsl_path(REPO / 'tools/sam3d/run_take.py')}' serve")
+        worker = subprocess.Popen(["wsl", "-d", "Ubuntu", "--", "bash", "-lc", command], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                  errors="replace", bufsize=1)
+        sys._gamelab_mocap_worker = worker
+    return worker
+
+
+def run_on_worker(name, upright, hands):
+    """Hands one take to the worker and follows its STAGE lines until JOB DONE. One take at a time."""
+    lock = sys.__dict__.setdefault("_gamelab_mocap_lock", threading.Lock())
+    with lock:
+        for attempt in range(2):   # a worker that idled out just as the take arrived is started again, once
+            worker, tail, started = start_worker(), [], False
+            try:
+                worker.stdin.write(f"{wsl_path(upright)}\t{wsl_path(CAPTURES / name)}\t{'hands' if hands else ''}\n")
+                worker.stdin.flush()
+            except OSError:
+                continue
+            for line in worker.stdout:
+                tail = (tail + [line.rstrip()])[-25:]
+                if line.startswith("STAGE "):
+                    started = True
+                    set_status(name, state="running", stage=line[6:].strip())
+                    if not line.startswith("STAGE frame") or "1 of" in line[:12]:
+                        print(f"  [mocap] {name}: {line[6:].strip()}", flush=True)
+                elif line.startswith("JOB DONE"):
+                    return
+                elif line.startswith("JOB FAILED"):
+                    raise RuntimeError("SAM 3D Body stopped:\n" + "\n".join(tail))
+                elif line.startswith("WORKER IDLE") and not started:
+                    break
+            if started:
+                raise RuntimeError("SAM 3D Body's worker stopped:\n" + "\n".join(tail))
+        raise RuntimeError("couldn't start SAM 3D Body in WSL:\n" + "\n".join(tail))
+
+
 def run_job(name, hands=False):
-    """Runs in its own thread: ffmpeg makes the video upright at 30 frames a second, then GVHMR runs in WSL."""
+    """Runs in its own thread: ffmpeg makes the video upright at 30 frames a second, then SAM 3D Body runs on it."""
     raw, upright = CAPTURES / f"{name}.mov", CAPTURES / f"{name}.mp4"
     try:
         set_status(name, state="running", stage="preparing the video")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-r", "30", "-c:v", "libx264", "-crf", "18",
                         "-pix_fmt", "yuv420p", str(upright)], check=True, capture_output=True)
-        # SAM 3D Body (tools/sam3d). GVHMR (tools/gvhmr) also works once its SMPL-X body model is downloaded.
-        command = ("source ~/miniforge3/etc/profile.d/conda.sh && conda activate sam3d && cd ~/sam-3d-body && "
-                   f"python '{wsl_path(REPO / 'tools/sam3d/run_take.py')}' '{wsl_path(upright)}' '{wsl_path(CAPTURES / name)}'" + (" hands" if hands else ""))
-        process = subprocess.Popen(["wsl", "-d", "Ubuntu", "--", "bash", "-lc", command], stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-        tail = []
-        for line in process.stdout:
-            tail = (tail + [line.rstrip()])[-25:]
-            if line.startswith("STAGE "):
-                set_status(name, state="running", stage=line[6:].strip())
-                print(f"  [mocap] {name}: {line[6:].strip()}", flush=True)
-        if process.wait() != 0 or not (CAPTURES / f"{name}-sam3d.txt").exists():
-            raise RuntimeError("SAM 3D Body stopped:\n" + "\n".join(tail))
+        set_status(name, state="running", stage="waiting for the PC's model")
+        run_on_worker(name, upright, hands)
         set_status(name, state="done", stage="done", file=f"captures/{name}-sam3d.bvh")
         print(f"  [mocap] saved captures/{name}-sam3d.bvh", flush=True)
     except Exception as problem:
