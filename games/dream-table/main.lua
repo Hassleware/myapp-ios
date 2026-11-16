@@ -371,13 +371,11 @@ local function player_hit()
   if power > 0.8 then say("SMASH!") end
 end
 
+-- The computer is a polite robot that can't lose: every return (and serve) is a gentle ball landing mid-table on
+-- your half, on your paddle's side, never fast and never out.
 local function cpu_hit()
-  local tx = (math.random() * 2 - 1) * (HALF_W - 0.15)
-  local tz = 0.5 + math.random() * 0.75
-  local T = 0.55 + math.random() * 0.2
-  if math.random() < 0.15 then T = 0.42 end              -- now and then, a fast one
-  if math.random() < 0.08 then tz = HALF_L + 0.25 end    -- and now and then, an unforced error: long
-  hit("cpu", shot(ball.x, ball.y, ball.z, tx, tz, T))
+  local tx = lib.clamp(me.x * 0.6 + (math.random() - 0.5) * 0.2, -(HALF_W - 0.25), HALF_W - 0.25)
+  hit("cpu", shot(ball.x, ball.y, ball.z, tx, 0.7 + math.random() * 0.2, 0.8))
 end
 
 -- ---------------------------------------------------------------- points and serving
@@ -459,7 +457,9 @@ local function step_ball(dt)
         award(other(last), "it bounced on the hitter's own side")
       else
         bounces[side] = bounces[side] + 1
-        if bounces[side] >= 2 then award(last, "two bounces") end
+        if bounces[side] >= 2 and side == "cpu" and #moves > 0 then
+          spark(ball.x, ball.y, ball.z) cpu_hit()    -- it can't lose: a short ball is still returned
+        elseif bounces[side] >= 2 then award(last, "two bounces") end
       end
     end
   end
@@ -476,7 +476,7 @@ local function step_ball(dt)
   if state == "toss" then
     if ball.vy < 0 and len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE then
       spark(ball.x, ball.y, ball.z)
-      hit("cpu", shot(ball.x, ball.y, ball.z, (math.random() * 2 - 1) * 0.55, 0.6 + math.random() * 0.6, 0.7))
+      cpu_hit()
       body.ty = 0
       body.serve_hand = body.serve_hand == "R" and "L" or "R"   -- next serve with the other hand
     elseif ball.y - R <= 0.02 then
@@ -491,7 +491,11 @@ local function step_ball(dt)
       if dx * dx + dy * dy <= REACH * REACH then ball.z = PADDLE_Z - 0.01 spark(ball.x, ball.y, ball.z) player_hit() end
     elseif last == "player" and bounces.cpu == 1 and #moves > 0 then
       -- The mannequin returns it only if its bat really touches it.
-      if len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE then spark(ball.x, ball.y, ball.z) cpu_hit() body.ty = 0 end
+      -- Its bat should meet the ball; if the swing ever misses, it still returns it before it reaches the floor.
+      local rescue = ball.vy < 0 and ball.y < 0.35
+      if len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE or rescue then
+        spark(ball.x, ball.y, ball.z) cpu_hit() body.ty = 0
+      end
     elseif last == "player" and bounces.cpu == 1 and pz > AI_Z and ball.z <= AI_Z then
       local dx, dy = ball.x - cpu.x, ball.y - cpu.y
       if dx * dx + dy * dy <= AI_REACH * AI_REACH then ball.z = AI_Z + 0.01 cpu_hit() end
