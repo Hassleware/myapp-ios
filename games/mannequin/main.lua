@@ -31,6 +31,8 @@ local HEEL_BACK, TOES_FRONT = 0.045, 0.13   -- the contact points: heel, and the
 local SOLE_BACK, SOLE_FRONT, SOLE_HALF = 0.049, 0.186, 0.046   -- the sole's real corners (measured from the model),
                                                                -- which are never let through the ground
 local HEEL_UP = 0.06        -- the toes stay planted until the heel has risen this far: heel first, toes last
+local BOUNCE_HZ = 2.0       -- cartoon smoothing: every bone follows the animation on a spring this many times a second
+local BOUNCE_DAMP = 0.45    -- below 1 overshoots and settles (bouncy); 1 is smooth with no overshoot
 
 -- The collision world the feet stand on: the floor and a low wooden step.
 local STEP = { x = 0.32, y = 0.04, z = 0.05, sx = 0.42, sy = 0.08, sz = 0.8 }
@@ -110,14 +112,14 @@ end
 
 -- ---------------------------------------------------------------- one contact point: heel or toes
 
-local function contact(point, at, dt, hold)
+local function contact(point, at, dt, hold, forced)
   local ground, normal = ground_below(at)
   local first = point.last == nil
   local speed = point.last and len(sub(at, point.last)) / math.max(dt, 1e-4) or 0
   point.last = at
   -- Down if low over the ground under it, or low over the animation's own floor (the other foot may be up on the
   -- step, which lifted the body): then the leg reaches down to the real ground and the hips drop to let it.
-  local down = math.min(at[2] - ground, at[2] - fall.offset) < PLANT_HEIGHT and speed < PLANT_SPEED
+  local down = forced or (math.min(at[2] - ground, at[2] - fall.offset) < PLANT_HEIGHT and speed < PLANT_SPEED)
   if down and not point.lock then point.lock = v(at[1], 0, at[3]) end
   if first and down then point.weight = 1 end   -- the first frame starts planted, not easing down from the air
   local drifted = point.lock and len(v(at[1] - point.lock[1], 0, at[3] - point.lock[3])) > RELEASE
@@ -131,6 +133,37 @@ local function contact(point, at, dt, hold)
   target[2] = math.max(lib.lerp(at[2], ground, point.weight), ground)   -- never through the ground
   point.target, point.ground, point.normal = target, ground, normal
   return target
+end
+
+-- ---------------------------------------------------------------- cartoon smoothing
+
+-- Every bone chases the animation's pose on a spring instead of copying it: shake is smoothed away, and quick moves
+-- overshoot a little and settle, which reads as bouncy. Runs before gravity and the feet, so feet still land true.
+local springs = {}
+local function bounce(dt)
+  local w = 2 * math.pi * BOUNCE_HZ
+  for _, n in ipairs(model.nodes(dummy)) do
+    local target = { model["local"](dummy, anim.animator, n.name) }
+    local s = springs[n.name]
+    if not s then
+      s = { now = target, speed = { 0, 0, 0, 0, 0, 0, 0 } }
+      springs[n.name] = s
+    end
+    if target[4] * s.now[4] + target[5] * s.now[5] + target[6] * s.now[6] + target[7] * s.now[7] < 0 then
+      for i = 4, 7 do target[i] = -target[i] end   -- the same turn the short way round
+    end
+    local steps = math.ceil(dt * 240)   -- small steps keep a stiff spring steady on a slow frame
+    local h = dt / steps
+    for _ = 1, steps do
+      for i = 1, 7 do
+        s.speed[i] = s.speed[i] + (w * w * (target[i] - s.now[i]) - 2 * BOUNCE_DAMP * w * s.speed[i]) * h
+        s.now[i] = s.now[i] + s.speed[i] * h
+      end
+    end
+    local q = math.sqrt(s.now[4] ^ 2 + s.now[5] ^ 2 + s.now[6] ^ 2 + s.now[7] ^ 2)
+    model["local"](dummy, anim.animator, n.name, s.now[1], s.now[2], s.now[3],
+                   s.now[4] / q, s.now[5] / q, s.now[6] / q, s.now[7] / q, target[8], target[9], target[10])
+  end
 end
 
 -- ---------------------------------------------------------------- gravity, then the feet
@@ -163,7 +196,8 @@ local function solve_feet(dt)
     local heel_t = contact(leg.heel, heel, dt)
     -- The toes hold the ground until the heel is down no longer and has risen HEEL_UP: the foot rolls off them.
     local heel_up = leg.heel.lock == nil and heel_t[2] - leg.heel.ground > HEEL_UP
-    local toes_t = contact(leg.toes, toes, dt, leg.toes.lock ~= nil and not heel_up)
+    -- One way: a heel on the ground always has its toes down too. Toes down with the heel up is fine.
+    local toes_t = contact(leg.toes, toes, dt, leg.toes.lock ~= nil and not heel_up, leg.heel.lock ~= nil)
     -- Turn the foot so heel-to-toes runs where the targets do: this is the pivot on the toes or heel.
     local foot = qmul(from_to(sub(toes, heel), sub(toes_t, heel_t)), turn)
     -- With both down, level it side to side onto the ground.
@@ -260,12 +294,14 @@ function init()
     hands[#hands + 1] = { bone = "hand." .. side, node = "bat." .. side, offset = qinv({ qx, qy, qz, qw }) }
   end
   fall.offset, fall.speed, fall.started, fall.solved, hips_drop = 0, 0, false, false, 0
+  springs = {}
   play(1)
 end
 
 function update(dt)
   anim:update(dt)
   if ik_on and dt > 0 then
+    bounce(dt)
     fall_to_ground(dt)
     solve_feet(dt)
   end
@@ -304,6 +340,6 @@ function draw()
   local left, top = gfx.safe()
   local name = clips[1] and clips[1].name or "no clips in mannequin.glb"
   gfx.text("MANNEQUIN  -  " .. name, left + 80, top + 24, 26, 1, 1, 1)
-  gfx.text("GRAVITY + FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
+  gfx.text("SMOOTHING + GRAVITY + FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
            ik_on and 0.5 or 0.9, ik_on and 1.0 or 0.6, ik_on and 0.6 or 0.5)
 end
