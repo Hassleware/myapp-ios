@@ -243,6 +243,10 @@ def process(video, prefix, hands, model, estimator, detector):
         positions, rotations, parents, names = simplify(positions, rotations, parents, names)
         count = len(names)
     write_bvh(prefix + "-sam3d.bvh", positions, rotations, parents, names, fps)
+    # Everything, unrounded, for retargeting onto a character (tools/blender_retarget.py): positions are metres,
+    # y up; rotations are each joint's world rotation.
+    np.savez_compressed(prefix + "-sam3d.npz", positions=positions.astype(np.float32), rotations=rotations.astype(np.float32),
+                        parents=np.array(parents), names=np.array(names), fps=np.array(fps))
 
     # The phone's replay: every other frame at centimetre precision keeps a minute's take under 2 MB.
     text = [f"fps {round(fps / 2)} joints {count}", " ".join(str(p) for p in parents)]
