@@ -4,7 +4,9 @@
 -- direction picks the stroke from the recorded shots (the way the bat travelled when it was recorded), and its
 -- direction and length aim the ball and set its pace. Draw it any time before the ball arrives; the mannequin
 -- times the swing and steps to meet the ball. On the left half, let go while the finger is still moving fast and
--- it's a jump that way (up: toward the table; up-left, up-right; mostly sideways: a dive), harder flicks further.
+-- it's a jump that way, any angle at all: straight up hops high toward the table, the more sideways the flick the
+-- lower, longer and more tipped over (a dive), down hops back. Harder flicks go further. The most extreme dives
+-- leave the mannequin down for a moment before it can get up.
 -- Your serve, as in real table tennis: the first line tosses the ball up off your bat; the second is the swing, and
 -- you time it: the bat meets the ball where it will be SWING_LEAD seconds after you finish drawing. The serve must
 -- bounce on your side, then on the other. Miss it and it's the robot's point.
@@ -68,8 +70,9 @@ local CARIOCA_SPEED = 0.6            -- moving sideways faster than this, the tr
 local CROSS_PAST, CROSS_DEPTH = 0.08, 0.09   -- how far past the leading foot it lands, and in front of or behind it
 local JUMP_SPEED, GRAVITY = 3.2, 9.8 -- a jump leaves the ground this fast (about half a metre high)
 local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
-local JUMP_REACH, DIVE_REACH = 2.2, 3.4   -- metres a second across the floor for a jump and for a dive
-local DIVE_LEAN = math.rad(55)       -- how far a dive tips the body over toward where it's going
+local JUMP_REACH, DIVE_REACH = 2.2, 4.0   -- metres a second across the floor for a jump and for a dive
+local DIVE_LEAN = math.rad(55)       -- how far the most sideways, hardest dive tips the body over
+local DOWN_FROM, DOWN_MOST = 0.35, 1.4   -- dives more extreme than this (0 to 1) stay down, up to this many seconds
 local SWING_LEAD = 0.32              -- your serve swing meets the ball this long after you finish the line
 local LIFTED = 0.07                  -- an ankle the animation raises this far above the other is its own step: leave it
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
@@ -218,7 +221,7 @@ local function new_mannequin(side)
               blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
               face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
   local z = m.sign * (HALF_L + 0.6)
-  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, down = 0, down_for = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
              blade = v(0, 1, z) }
   for _, s in ipairs({ "L", "R" }) do
     local ankle = joint("foot." .. s, 0)
@@ -431,7 +434,8 @@ local function pose(m, dt)
   blend_pose(m, dt)
   local b = m.body
   b.base = toward(b.base, facing(m, b.move), 1 - math.exp(-12 * dt))
-  b.roll = lib.approach(b.roll, b.air > 0 and b.lean or 0, b.air > 0 and 10 or 5, dt)   -- tip over in the air, get up after
+  local rate = b.air > 0 and 10 or (b.down_for > 0 and 2.5 or 5)
+  b.roll = lib.approach(b.roll, (b.air > 0 or b.down > 0) and b.lean or 0, rate, dt)   -- tipped in the air and while down
   local ahead = rot(b.base, v(0, 0, 1))
   local half = b.roll / 2
   b.turn = qmul({ ahead[1] * math.sin(half), ahead[2] * math.sin(half), ahead[3] * math.sin(half), math.cos(half) }, b.base)
@@ -449,13 +453,20 @@ local function walk(m, dt)
   b.vx, b.vz = vx, vz
   b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
+  if b.down > 0 then                                  -- down after a big dive: no walking until it's back up
+    b.down = math.max(0, b.down - dt)
+    b.tx, b.tz = b.x, b.z
+    if b.down == 0 then b.lean = 0 end
+  elseif b.air == 0 then
+    b.lean = 0
+  end
   if b.air > 0 or b.jv > 0 then                       -- a jump: up, then down under gravity, carried the way it went
     b.jv = b.jv - GRAVITY * dt
     b.air = b.air + b.jv * dt
     b.x = lib.clamp(b.x + b.jx * dt, -1.8, 1.8)
     b.z = m.sign * lib.clamp(m.sign * (b.z + b.jz * dt), HALF_L + 0.25, HALF_L + 1.8)
     b.tx, b.tz, b.vx, b.vz = b.x, b.z, b.jx, b.jz
-    if b.air <= 0 then b.air, b.jv, b.jx, b.jz, b.lean = 0, 0, 0, 0, 0 end
+    if b.air <= 0 then b.air, b.jv, b.jx, b.jz, b.down = 0, 0, 0, 0, b.down_for end
   end
 end
 
@@ -712,20 +723,22 @@ local function swing_now(line)
   end)
 end
 
--- A jump from a flick: dir is the finger's direction on screen (right, up), power 0.5 to 1. Up goes toward the
--- table; mostly sideways is a dive: lower, longer, tipping the body over toward where it's going.
+-- A jump from a flick, as continuous as the angle you flick at: (right, up) is the finger's direction on screen,
+-- power 0.5 to 1. The more sideways, the lower, longer and more tipped over it goes; up carries it toward the table,
+-- down back from it. How extreme it is (sideways times power) past DOWN_FROM decides how long it stays down.
 local function jump(right, up, power)
   local b = you.body
-  if b.air > 0 then return end
-  local dive = math.abs(right) > 0.75
-  local reach = (dive and DIVE_REACH or JUMP_REACH) * power
-  b.jx, b.jz = right * reach, -math.max(up, 0) * reach * 0.6      -- screen up is toward the table (-z for you)
-  b.jv, b.air = dive and 2.0 or JUMP_SPEED * power, 0.001
-  -- Tip toward the way it's going: about the way the body faces.
+  if b.air > 0 or b.down > 0 then return end
+  local side = right * right                                       -- 0 straight up or down, 1 flat sideways
+  local reach = lib.lerp(JUMP_REACH, DIVE_REACH, side) * power
+  b.jx, b.jz = right * reach, -up * reach * 0.6                   -- screen up is toward the table (-z for you)
+  b.jv, b.air = JUMP_SPEED * power * (0.6 + 0.4 * (1 - side)), 0.001
   local ahead = rot(b.base, v(0, 0, 1))
-  local side = cross(ahead, v(0, 1, 0))
-  local toward_side = side[1] * b.jx + side[3] * b.jz
-  b.lean = (dive and DIVE_LEAN or math.rad(12) * math.abs(right)) * (toward_side >= 0 and 1 or -1)
+  local across = cross(ahead, v(0, 1, 0))
+  local toward_side = across[1] * b.jx + across[3] * b.jz
+  b.lean = DIVE_LEAN * side * power * (toward_side >= 0 and 1 or -1)   -- tipped toward where it's going
+  local extreme = side * power
+  b.down_for = extreme > DOWN_FROM and (extreme - DOWN_FROM) / (1 - DOWN_FROM) * DOWN_MOST or 0
 end
 
 local function swing_from(line)
@@ -762,20 +775,22 @@ local function fingers(dt)
         local d = drags[t.id]
         d[#d + 1] = { sys.real_time(), t.x, t.y }
         while #d > 2 and sys.real_time() - d[1][1] > 0.1 do table.remove(d, 1) end   -- the last tenth of a second
-        you.body.tx = lib.clamp(you.body.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
-        you.body.tz = lib.clamp(you.body.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
+        if you.body.down == 0 then                     -- no walking while getting up after a big dive
+          you.body.tx = lib.clamp(you.body.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
+          you.body.tz = lib.clamp(you.body.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
+        end
       elseif lines[t.id] then
         table.insert(lines[t.id], { t.x, t.y })
       end
     elseif t.phase == "up" then
-      -- Let go while the finger is still moving fast (and not downward): a jump that way. Otherwise just a walk.
+      -- Let go while the finger is still moving fast: a jump that way, whatever the angle. Otherwise just a walk.
       local d = drags[t.id]
       if d and #d >= 2 then
         local a = d[1]
         local span = math.max(sys.real_time() - a[1], 1e-3)
         local vx, vy = (t.x - a[2]) / span, (a[3] - t.y) / span     -- right and up, units a second
         local speed = math.sqrt(vx * vx + vy * vy)
-        if speed > FLICK_SPEED and vy > -0.35 * speed then
+        if speed > FLICK_SPEED then
           jump(vx / speed, vy / speed, lib.clamp(speed / 2000, 0.5, 1))
         end
       end
