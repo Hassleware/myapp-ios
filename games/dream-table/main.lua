@@ -57,8 +57,9 @@ local CONTACT = 2.0                  -- seconds into every shot clip that the ba
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
 local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it
-local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.2, 0.07   -- a foot this far behind steps, taking this long, this high
-local LIFTED = 0.04                  -- an ankle the animation raises this far is the animation's own step: leave it
+local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.16, 0.07  -- a foot this far behind steps, taking this long, this high
+local TOP_SPEED = 2.2                -- metres a second: the body can't outrun its feet
+local LIFTED = 0.07                  -- an ankle the animation raises this far above the other is its own step: leave it
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
 local CROUCH = 0.3                   -- how far a body may sink (knees bending) to play a high shot on a lower ball
 local TOSS = 2.6                     -- how fast the flick sends the ball up to be served (metres a second)
@@ -205,7 +206,7 @@ local function new_mannequin(side)
               blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
               face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
   local z = m.sign * (HALF_L + 0.6)
-  m.body = { x = 0, y = 0, ty = 0, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+  m.body = { x = 0, y = 0, ty = 0, drop = 0, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
              blade = v(0, 1, z) }
   for _, s in ipairs({ "L", "R" }) do
     local ankle = joint("foot." .. s, 0)
@@ -217,8 +218,9 @@ end
 
 local robot, you
 
-local function to_world(m, p) return add(v(m.body.x, m.body.y, m.body.z), rot(m.body.turn, p)) end
-local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, v(m.body.x, m.body.y, m.body.z))) end
+-- body.drop lowers the whole body so its lowest foot is on the floor (the recordings hold the hips a little high).
+local function to_world(m, p) return add(v(m.body.x, m.body.y - m.body.drop, m.body.z), rot(m.body.turn, p)) end
+local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, v(m.body.x, m.body.y - m.body.drop, m.body.z))) end
 local function facing(m, move) return qmul(m.face, move.turn) end
 local function blade_offset(m, move) return rot(m.face, move.blade) end
 
@@ -333,20 +335,38 @@ local function reach(m, leg, target)
   set_turn(leg.foot, new_shin, foot_turn, a)
 end
 
--- Planted feet stay put while the body moves; one at a time, a foot left too far behind steps.
+-- Planted feet stay flat on the floor while the body moves; one at a time, a foot left too far behind steps.
+-- The recordings hold one ankle a few centimetres up nearly all the time (left over from fitting the take to the
+-- mannequin), so a foot counts as the animation's own step only when it is LIFTED above the other one.
 local function feet(m, dt)
+  -- How high the animation holds each ankle above standing on the floor; the body drops so the lowest one is.
+  local low = math.huge
+  for _, leg in ipairs(m.legs) do low = math.min(low, joint(leg.foot, m.anim.animator)[2] - leg.rest) end
+  m.body.drop = lib.approach(m.body.drop, low, 20, dt)
+  local wants = {}
   for i, leg in ipairs(m.legs) do
     local wanted = to_world(m, (joint(leg.foot, m.anim.animator)))
-    wanted[2] = wanted[2] - m.body.y          -- the animation's own ankle height off the ground: crouching bends the knees
+    wanted[2] = wanted[2] - (m.body.y - m.body.drop) - leg.rest
+    wants[i] = wanted
+  end
+  low = math.min(wants[1][2], wants[2][2])
+  for i, leg in ipairs(m.legs) do
+    local wanted = wants[i]
+    local lift = wanted[2] - low
+    wanted[2] = leg.rest + (lift > LIFTED and lift or 0)          -- on the floor unless the animation steps
     local other = m.legs[3 - i]
     leg.plant = leg.plant or wanted
     local target
-    if wanted[2] - leg.rest > LIFTED then                         -- the animation's own step: follow it
+    if lift > LIFTED then                                         -- the animation's own step: follow it
       leg.plant, leg.step, target = wanted, nil, wanted
     else
-      if not leg.step and not other.step and
-         math.sqrt((wanted[1] - leg.plant[1]) ^ 2 + (wanted[3] - leg.plant[3]) ^ 2) > STEP_LENGTH then
-        leg.step = { from = leg.plant, to = v(wanted[1] + m.body.vx * 0.12, wanted[2], wanted[3] + m.body.vz * 0.12), t = 0 }
+      -- Steps alternate (the next may start when the other foot is halfway), a foot left twice a stride behind
+      -- steps anyway, and each step lands where the body is heading, so planted feet are never dragged.
+      local behind = math.sqrt((wanted[1] - leg.plant[1]) ^ 2 + (wanted[3] - leg.plant[3]) ^ 2)
+      local free = not other.step or other.step.t > 0.5
+      if not leg.step and behind > STEP_LENGTH and (free or behind > STEP_LENGTH * 2) then
+        local lead = STEP_TIME * 1.2
+        leg.step = { from = leg.plant, to = v(wanted[1] + m.body.vx * lead, wanted[2], wanted[3] + m.body.vz * lead), t = 0 }
       end
       if leg.step then
         leg.step.t = math.min(1, leg.step.t + dt / STEP_TIME)
@@ -358,8 +378,13 @@ local function feet(m, dt)
         target = v(leg.plant[1], wanted[2], leg.plant[3])
       end
     end
-    -- Eased, so a foot never jumps when it changes between planted, stepping and following the animation.
-    leg.at = leg.at and add(leg.at, mul(sub(target, leg.at), 1 - math.exp(-30 * dt))) or target
+    -- A foot never jumps when it changes between planted, stepping and following the animation: the jump is kept
+    -- as an offset that fades out. Otherwise the foot is exactly on its target, so a landed step doesn't slide.
+    local mode = leg.step and "step" or (lift > LIFTED and "anim" or "planted")
+    if leg.at and mode ~= leg.mode then leg.offset = sub(leg.at, target) end
+    leg.mode = mode
+    leg.offset = leg.offset and mul(leg.offset, math.exp(-25 * dt)) or v(0, 0, 0)
+    leg.at = add(target, leg.offset)
     reach(m, leg, to_model(m, leg.at))
   end
 end
@@ -387,14 +412,17 @@ end
 local function walk(m, dt)
   local b = m.body
   local nx, nz = lib.approach(b.x, b.tx, WALK, dt), lib.approach(b.z, b.tz, WALK, dt)
-  b.vx, b.vz = (nx - b.x) / dt, (nz - b.z) / dt
-  b.x, b.z = nx, nz
+  local vx, vz = (nx - b.x) / dt, (nz - b.z) / dt
+  local speed = math.sqrt(vx * vx + vz * vz)
+  if speed > TOP_SPEED then vx, vz = vx / speed * TOP_SPEED, vz / speed * TOP_SPEED end
+  b.vx, b.vz = vx, vz
+  b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
 end
 
 local function draw_mannequin(m)
   local q = m.body.turn
-  model.draw(dummy, m.body.x, m.body.y, m.body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, m.anim.animator)
+  model.draw(dummy, m.body.x, m.body.y - m.body.drop, m.body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, m.anim.animator)
   for _, hand in pairs(hands) do
     local wrist, turn = joint(hand.bone, m.anim.animator)
     local at, t = to_world(m, wrist), qmul(qmul(q, turn), hand.offset)
