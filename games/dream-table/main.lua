@@ -5,8 +5,9 @@
 -- direction and length aim the ball and set its pace. Draw it any time before the ball arrives; the mannequin
 -- times the swing and steps to meet the ball. On the left half, let go while the finger is still moving fast and
 -- it's a jump that way, any angle at all: straight up hops high toward the table, the more sideways the flick the
--- lower, longer and more tipped over (a dive), down hops back. Harder flicks go further. The most extreme dives
--- leave the mannequin down for a moment before it can get up.
+-- lower, longer and more tipped over (a dive), down hops back. Harder flicks go further; a soft flick is a short hop.
+-- In the air it's light and floaty: drag to steer, flick again for one more jump (any direction), flick down to drop
+-- fast. Big dives end on the floor: it falls over, bracing on its arms, stays down, then rolls up to a kneel and stands.
 -- Your serve, as in real table tennis: the first line tosses the ball up off your bat; the second is the swing, and
 -- you time it: the bat meets the ball where it will be SWING_LEAD seconds after you finish drawing. The serve must
 -- bounce on your side, then on the other. Miss it and it's the robot's point.
@@ -68,11 +69,17 @@ local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.16, 0.07  -- a foot this far
 local TOP_SPEED = 2.2                -- metres a second: the body can't outrun its feet
 local CARIOCA_SPEED = 0.6            -- moving sideways faster than this, the trailing foot crosses over (carioca)
 local CROSS_PAST, CROSS_DEPTH = 0.08, 0.09   -- how far past the leading foot it lands, and in front of or behind it
-local JUMP_SPEED, GRAVITY = 3.2, 9.8 -- a jump leaves the ground this fast (about half a metre high)
+local JUMP_SPEED = 4.4               -- a full jump leaves the ground this fast: about 1.6 m high, a light character
+local AIR_GRAVITY = 6.0              -- floaty: weaker than real gravity in the air
+local FALL_MAX, FAST_FALL = 3.5, 6.5 -- how fast it may fall, and how fast after a downward flick in the air
+local AIR_JUMP, AIR_JUMPS = 3.8, 1   -- a jump in mid-air (any direction), and how many before landing
+local AIR_STEER, AIR_SPEED = 0.012, 3.0   -- dragging in the air nudges it (m/s per unit), up to this fast
+local SQUAT = 0.05                   -- a moment's crouch before it leaves the ground
+local FALL_ROLL = math.rad(82)       -- a big dive ends lying this far over
 local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
 local JUMP_REACH, DIVE_REACH = 2.2, 4.0   -- metres a second across the floor for a jump and for a dive
 local DIVE_LEAN = math.rad(55)       -- how far the most sideways, hardest dive tips the body over
-local DOWN_FROM, DOWN_MOST = 0.35, 1.4   -- dives more extreme than this (0 to 1) stay down, up to this many seconds
+local DOWN_FROM, DOWN_MOST = 0.35, 1.4   -- dives more extreme than this (0 to 1) fall over and stay down, up to this long
 local SWING_LEAD = 0.32              -- your serve swing meets the ball this long after you finish the line
 local LIFTED = 0.07                  -- an ankle the animation raises this far above the other is its own step: leave it
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
@@ -221,7 +228,8 @@ local function new_mannequin(side)
               blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
               face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
   local z = m.sign * (HALF_L + 0.6)
-  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, down = 0, down_for = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, down = 0, down_for = 0, squat = 0, launch = 0, fast = false, air_jumps = AIR_JUMPS,
+             phase = nil, phase_t = 0, pivot = v(0, 0, 0), fallw = 0, kneel = 0, sink = 0, fall_roll = 0, rise_for = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
              blade = v(0, 1, z) }
   for _, s in ipairs({ "L", "R" }) do
     local ankle = joint("foot." .. s, 0)
@@ -234,8 +242,12 @@ end
 local robot, you
 
 -- body.drop lowers the whole body so its lowest foot is on the floor (the recordings hold the hips a little high).
-local function to_world(m, p) return add(v(m.body.x, m.body.y - m.body.drop + m.body.air, m.body.z), rot(m.body.turn, p)) end
-local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, v(m.body.x, m.body.y - m.body.drop + m.body.air, m.body.z))) end
+-- Where the model's origin is: the body's place, its height (drop onto its feet, jumps, sinking), and pivot: tipping
+-- over (a dive, a fall) turns it about the hips rather than the feet.
+local function height(m) return m.body.y - m.body.drop + m.body.air - m.body.sink end
+local function origin(m) return add(v(m.body.x, height(m), m.body.z), m.body.pivot) end
+local function to_world(m, p) return add(origin(m), rot(m.body.turn, p)) end
+local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, origin(m))) end
 local function facing(m, move) return qmul(m.face, move.turn) end
 local function blade_offset(m, move) return rot(m.face, move.blade) end
 
@@ -361,7 +373,7 @@ local function feet(m, dt)
   local wants = {}
   for i, leg in ipairs(m.legs) do
     local wanted = to_world(m, (joint(leg.foot, m.anim.animator)))
-    wanted[2] = wanted[2] - (m.body.y - m.body.drop + m.body.air) - leg.rest
+    wanted[2] = wanted[2] - height(m) - leg.rest
     wants[i] = wanted
   end
   low = math.min(wants[1][2], wants[2][2])
@@ -372,7 +384,7 @@ local function feet(m, dt)
     local other = m.legs[3 - i]
     leg.plant = leg.plant or wanted
     local target
-    if m.body.air > 0.005 then                                    -- jumping: the feet go up with the body
+    if m.body.air > 0.005 or m.body.phase then                    -- jumping or fallen: the feet go with the body
       target = to_world(m, (joint(leg.foot, m.anim.animator)))
       leg.plant, leg.step = v(target[1], leg.rest, target[3]), nil
     elseif lift > LIFTED then                                     -- the animation's own step: follow it
@@ -409,7 +421,7 @@ local function feet(m, dt)
     end
     -- A foot never jumps when it changes between planted, stepping and following the animation: the jump is kept
     -- as an offset that fades out. Otherwise the foot is exactly on its target, so a landed step doesn't slide.
-    local mode = m.body.air > 0.005 and "air" or leg.step and "step" or (lift > LIFTED and "anim" or "planted")
+    local mode = (m.body.air > 0.005 or m.body.phase) and "air" or leg.step and "step" or (lift > LIFTED and "anim" or "planted")
     if leg.at and mode ~= leg.mode then leg.offset = sub(leg.at, target) end
     leg.mode = mode
     leg.offset = leg.offset and mul(leg.offset, math.exp(-25 * dt)) or v(0, 0, 0)
@@ -424,6 +436,36 @@ local function on_bat(m, side)
   return v(b[1], b[2] + R + 0.012, b[3])
 end
 
+-- Procedural limbs on top of whatever the animation does, each by a weight from 0 to 1:
+--   fall: knees drawn up, arms thrown out to brace toward the side it falls to (side = -1 or 1), head held up;
+--   kneel: hips and knees bent deep, for getting up; tuck: knees pulled up in the air, as a light jumper does.
+-- Bones are turned about the body's own side and forward axes (inside the model), whole limbs at once.
+local function axis_turn(axis, angle)
+  local h = angle / 2
+  return { axis[1] * math.sin(h), axis[2] * math.sin(h), axis[3] * math.sin(h), math.cos(h) }
+end
+local function bend_limbs(m, fall, kneel, tuck, side)
+  if fall + kneel + tuck < 0.01 then return end
+  local a = m.anim.animator
+  local inside = qinv(m.body.move.turn)
+  local ahead, left = rot(inside, v(0, 0, 1)), rot(inside, v(1, 0, 0))
+  local turns = {}
+  for _, b in ipairs(bones) do turns[b.name] = select(2, joint(b.name, a)) end
+  local hip = math.rad(50 * fall + 80 * kneel + 75 * tuck)
+  local knee = math.rad(80 * fall + 110 * kneel + 110 * tuck)
+  for _, s in ipairs({ "L", "R" }) do
+    local thigh, shin = axis_turn(left, -hip), axis_turn(left, -hip + knee)
+    turns["thigh." .. s] = qmul(thigh, turns["thigh." .. s])
+    turns["shin." .. s] = qmul(shin, turns["shin." .. s])
+    turns["foot." .. s] = qmul(shin, turns["foot." .. s])
+    local arm = qmul(axis_turn(ahead, side * math.rad(70) * fall), axis_turn(left, -math.rad(40) * (fall + kneel)))
+    for _, part in ipairs({ "upper_arm.", "forearm.", "hand." }) do turns[part .. s] = qmul(arm, turns[part .. s]) end
+  end
+  local head = axis_turn(ahead, -side * math.rad(35) * fall)
+  turns.neck, turns.head = qmul(head, turns.neck), qmul(head, turns.head)
+  write_pose(turns, (joint("hips", a)), a)
+end
+
 -- A little burst where bat and ball meet.
 local function spark(x, y, z) effects[#effects + 1] = { x = x, y = y, z = z, t = 0 } end
 
@@ -434,11 +476,38 @@ local function pose(m, dt)
   blend_pose(m, dt)
   local b = m.body
   b.base = toward(b.base, facing(m, b.move), 1 - math.exp(-12 * dt))
-  local rate = b.air > 0 and 10 or (b.down_for > 0 and 2.5 or 5)
-  b.roll = lib.approach(b.roll, (b.air > 0 or b.down > 0) and b.lean or 0, rate, dt)   -- tipped in the air and while down
+  -- After a big dive: falling (0.3 s), down (down_for), rising (rise_for): rolls back to a kneel, then stands.
+  local side = b.fall_roll >= 0 and 1 or -1
+  if b.phase == "falling" then
+    b.phase_t = b.phase_t + dt
+    local f = math.min(1, b.phase_t / 0.3)
+    b.roll = lib.lerp(b.roll, b.fall_roll, f)
+    b.fallw, b.kneel, b.sink = f, 0, 0.72 * f                   -- going down onto the floor
+    if f >= 1 then b.phase, b.phase_t = "down", 0 end
+  elseif b.phase == "down" then
+    b.phase_t = b.phase_t + dt
+    b.roll, b.fallw, b.sink = b.fall_roll, 1, 0.72
+    if b.phase_t >= b.down_for then b.phase, b.phase_t = "rising", 0 end
+  elseif b.phase == "rising" then
+    b.phase_t = b.phase_t + dt
+    local r = math.min(1, b.phase_t / b.rise_for)
+    local e = r * r * (3 - 2 * r)
+    b.roll = b.fall_roll * (1 - e)
+    b.fallw = 1 - math.min(1, e * 1.6)
+    b.kneel = math.sin(math.pi * r) * 0.9
+    b.sink = 0.72 * b.fallw + b.kneel * 0.3                       -- up off the floor, through a low kneel
+    if r >= 1 then b.phase, b.fallw, b.kneel, b.sink, b.roll, b.lean = nil, 0, 0, 0, 0, 0 end
+  else
+    b.roll = lib.approach(b.roll, b.air > 0 and b.lean or 0, b.air > 0 and 10 or 5, dt)   -- tipped in the air
+  end
+  local tuck = b.air > 0.05 and math.min(1, b.air / 0.4) * 0.7 * (1 - math.abs(b.lean) / DIVE_LEAN) or 0
+  if b.squat > 0 then tuck = 0.35 end
+  bend_limbs(m, b.fallw, b.kneel, tuck, side)
   local ahead = rot(b.base, v(0, 0, 1))
   local half = b.roll / 2
-  b.turn = qmul({ ahead[1] * math.sin(half), ahead[2] * math.sin(half), ahead[3] * math.sin(half), math.cos(half) }, b.base)
+  local roll = { ahead[1] * math.sin(half), ahead[2] * math.sin(half), ahead[3] * math.sin(half), math.cos(half) }
+  b.turn = qmul(roll, b.base)
+  b.pivot = sub(v(0, 0.9, 0), rot(roll, v(0, 0.9, 0)))           -- tip about the hips, not the feet
   feet(m, dt)
   m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
 end
@@ -453,26 +522,35 @@ local function walk(m, dt)
   b.vx, b.vz = vx, vz
   b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
-  if b.down > 0 then                                  -- down after a big dive: no walking until it's back up
-    b.down = math.max(0, b.down - dt)
-    b.tx, b.tz = b.x, b.z
-    if b.down == 0 then b.lean = 0 end
-  elseif b.air == 0 then
-    b.lean = 0
+  if b.phase then b.tx, b.tz = b.x, b.z end           -- fallen or getting up: no walking
+  if b.squat > 0 then                                 -- the crouch before take-off
+    b.squat = b.squat - dt
+    b.y = -0.08
+    if b.squat <= 0 then b.squat, b.jv, b.air = 0, b.launch, 0.001 end
   end
-  if b.air > 0 or b.jv > 0 then                       -- a jump: up, then down under gravity, carried the way it went
-    b.jv = b.jv - GRAVITY * dt
+  if b.air > 0 then                                   -- in the air: light and floaty, carried the way it jumped
+    b.jv = math.max(b.jv - AIR_GRAVITY * dt, b.fast and -FAST_FALL or -FALL_MAX)
     b.air = b.air + b.jv * dt
     b.x = lib.clamp(b.x + b.jx * dt, -1.8, 1.8)
     b.z = m.sign * lib.clamp(m.sign * (b.z + b.jz * dt), HALF_L + 0.25, HALF_L + 1.8)
     b.tx, b.tz, b.vx, b.vz = b.x, b.z, b.jx, b.jz
-    if b.air <= 0 then b.air, b.jv, b.jx, b.jz, b.down = 0, 0, 0, 0, b.down_for end
+    if b.air <= 0 then                                -- landing: a little squash, and a big dive falls over
+      b.air, b.jv, b.jx, b.jz, b.fast, b.air_jumps, b.y = 0, 0, 0, 0, false, AIR_JUMPS, -0.1
+      if b.down_for > 0 then
+        b.phase, b.phase_t = "falling", 0
+        b.fall_roll = (b.lean >= 0 and 1 or -1) * FALL_ROLL
+        b.rise_for = 0.5 + b.down_for * 0.6
+      else
+        b.lean = 0
+      end
+    end
   end
 end
 
 local function draw_mannequin(m)
   local q = m.body.turn
-  model.draw(dummy, m.body.x, m.body.y - m.body.drop + m.body.air, m.body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, m.anim.animator)
+  local o = origin(m)
+  model.draw(dummy, o[1], o[2], o[3], q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, m.anim.animator)
   for _, hand in pairs(hands) do
     local wrist, turn = joint(hand.bone, m.anim.animator)
     local at, t = to_world(m, wrist), qmul(qmul(q, turn), hand.offset)
@@ -728,11 +806,20 @@ end
 -- down back from it. How extreme it is (sideways times power) past DOWN_FROM decides how long it stays down.
 local function jump(right, up, power)
   local b = you.body
-  if b.air > 0 or b.down > 0 then return end
+  if b.phase or b.squat > 0 then return end
+  if b.air > 0 then
+    if up < -0.6 then                                 -- a flick down in the air: drop fast
+      b.fast, b.jv = true, math.min(b.jv, -FAST_FALL)
+      return
+    end
+    if b.air_jumps <= 0 then return end
+    b.air_jumps = b.air_jumps - 1                     -- one more jump in mid-air, any direction
+  end
   local side = right * right                                       -- 0 straight up or down, 1 flat sideways
   local reach = lib.lerp(JUMP_REACH, DIVE_REACH, side) * power
   b.jx, b.jz = right * reach, -up * reach * 0.6                   -- screen up is toward the table (-z for you)
-  b.jv, b.air = JUMP_SPEED * power * (0.6 + 0.4 * (1 - side)), 0.001
+  local launch = (b.air > 0 and AIR_JUMP or JUMP_SPEED) * power * (0.6 + 0.4 * (1 - side))
+  if b.air > 0 then b.jv, b.fast = launch, false else b.launch, b.squat = launch, SQUAT end
   local ahead = rot(b.base, v(0, 0, 1))
   local across = cross(ahead, v(0, 1, 0))
   local toward_side = across[1] * b.jx + across[3] * b.jz
@@ -775,9 +862,13 @@ local function fingers(dt)
         local d = drags[t.id]
         d[#d + 1] = { sys.real_time(), t.x, t.y }
         while #d > 2 and sys.real_time() - d[1][1] > 0.1 do table.remove(d, 1) end   -- the last tenth of a second
-        if you.body.down == 0 then                     -- no walking while getting up after a big dive
-          you.body.tx = lib.clamp(you.body.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
-          you.body.tz = lib.clamp(you.body.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
+        local b = you.body
+        if b.air > 0 then                              -- in the air: steer
+          b.jx = lib.clamp(b.jx + t.dx * AIR_STEER, -AIR_SPEED, AIR_SPEED)
+          b.jz = lib.clamp(b.jz + t.dy * AIR_STEER, -AIR_SPEED, AIR_SPEED)
+        elseif not b.phase then                        -- no walking while fallen or getting up
+          b.tx = lib.clamp(b.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
+          b.tz = lib.clamp(b.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
         end
       elseif lines[t.id] then
         table.insert(lines[t.id], { t.x, t.y })
