@@ -186,6 +186,7 @@ def read_api():
             comment.append(line[3:].strip())
         else:
             match = (re.match(r"function (\w+)\.(\w+)\(", line) or re.match(r"(\w+)\.([A-Z_]+) = ", line)
+                     or re.match(r'(\w+)\["(\w+)"\] = function', line)
                      or re.match(r"function ()(\w+)\(", line) or re.match(r"-- (callback) (\w+)", line))
             if match:
                 table, name = match.group(1) or "globals", match.group(2)

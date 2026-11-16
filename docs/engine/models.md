@@ -85,7 +85,7 @@ The cost is processor time per character. A handful is fine. A crowd would need 
 
 ## Changing a bone by hand
 
-`model.local(m, a, node, ...)` reads or sets one bone after posing. That is how a head turns to look at something, or a hand reaches for a handle, on top of whatever animation is playing.
+`model["local"](m, a, node, ...)` reads or sets one bone after posing (written with brackets because `local` is a Lua keyword). That is how a head turns to look at something, or a hand reaches for a handle, on top of whatever animation is playing.
 
 ## Things that go wrong
 

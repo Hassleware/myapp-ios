@@ -242,9 +242,9 @@ function model.pose(m, a, ...) end
 --- Where a bone is now, inside the model. For attaching a sword to a hand.
 function model.joint(m, a, node) end
 
---- `model.local(m, a, node [, <transform>])`
+--- `model["local"](m, a, node [, <transform>])`
 --- Reads a bone's own position, or sets it by hand after posing (a head turning to look at something).
-function model.local(m, a, node, ...) end
+model["local"] = function(m, a, node, ...) end   -- "local" is a Lua keyword, so it is written in brackets
 
 --- `model.sample(m, clip, node, time) -> <transform>`
 --- Where an animation puts one node at a time, without an animator.

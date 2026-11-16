@@ -85,7 +85,7 @@ model.clips(m) -> { {name, duration}, ... }
 model.draw(m, <transform>, r, g, b, a [, animator [, node]])     -- node: draw just that part, placed at the transform
 model.animator(m) -> a                         model.pose(m, a, clip, time, weight [, clip, time, weight ...])
 model.joint(m, a, node) -> <transform>         -- where a bone is now, inside the model
-model.local(m, a, node [, <transform>])        -- read or set a bone by hand, after posing
+model["local"](m, a, node [, <transform>])     -- read or set a bone by hand, after posing ("local" is a Lua keyword)
 model.sample(m, clip, node, time) -> <transform>
 -- clips and nodes are given by name or by number. extras are the object's Custom Properties in Blender.
 
