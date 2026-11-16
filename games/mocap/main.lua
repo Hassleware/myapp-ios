@@ -3,8 +3,16 @@
 -- graphics card, a stronger model with hands and feet, which writes captures/<name>-sam3d.bvh. The phone shows the PC's progress, then replays
 -- that result (REPLAY switches between that and the live camera).
 -- Prop the phone up about 3 metres away at waist height, or have someone hold it, and keep the whole body in view.
+-- The card at the top is the Dream Table shot to perform (shots.lua): tap its left or right side to change shot.
+-- Beeps lead the take, since the screen faces away while recording: three ticks, a high beep to hit the ball on,
+-- a low beep when it stops by itself. Takes are named after the shot: fh-drive-1, fh-drive-2...
 
 local lib = include("lib.lua")
+local shots = include("shots.lua")
+local shot_index = math.max(1, math.min(#shots, math.floor(save.get("shot", 1))))
+local sounds = { tick = audio.load("tick.wav"), hit = audio.load("hit.wav"), done = audio.load("end.wav") }
+local hit_played = false
+local card = { x = 0, y = 0, w = 0, h = 0 }
 
 local started, why_not = false, nil
 local state = "idle"          -- idle, countdown, recording, sending, processing
@@ -69,7 +77,10 @@ local function send()
   if not text then status = "Nothing recorded yet." return end
   takes = takes + 1
   save.set("takes", takes)
-  local name = "take-" .. takes
+  local shot = shots[shot_index]
+  local count = math.floor(save.get("count-" .. shot.id, 0)) + 1
+  save.set("count-" .. shot.id, count)
+  local name = shot.id .. "-" .. count
   state, status = "sending", "Sending " .. name .. " (ARKit) to the PC..."
   lib.run(function()
     local done = false
@@ -103,6 +114,7 @@ buttons = {
       elseif started and state == "idle" then
         showing_result = false
         state, countdown = "countdown", 3
+        audio.play(sounds.tick)
       end
     end },
   { label = function() return "SEND" end, run = function() if state == "idle" then send() end end },
@@ -142,15 +154,30 @@ function update(dt)
   if started and state == "idle" and status == "Looking for a body..." and tracked then status = "Tracking. Tap RECORD." end
 
   if state == "countdown" then
+    local before = math.ceil(countdown)
     countdown = countdown - dt
+    if math.ceil(countdown) < before then audio.play(sounds.tick) end   -- a tick each second; the last starts it
     if countdown <= 0 then
       mocap.record(true)
-      state, record_start = "recording", sys.real_time()
+      state, record_start, hit_played = "recording", sys.real_time(), false
       input.haptic("medium")
+    end
+  elseif state == "recording" then
+    local t, shot = sys.real_time() - record_start, shots[shot_index]
+    if not hit_played and t >= shot.contact then hit_played = true audio.play(sounds.hit) end
+    if t >= shot.length then   -- stops by itself, so every take of a shot is the same length
+      mocap.record(false)
+      audio.play(sounds.done)
+      state, status = "idle", string.format("Recorded %d frames of %s. SEND to save it on the PC.", mocap.frames(), shot.id)
     end
   end
 
   for _, t in ipairs(input.touches()) do
+    if t.phase == "down" and state == "idle" and not showing_result and t.y >= card.y and t.y <= card.y + card.h then
+      local step = t.x < card.x + card.w / 2 and -1 or 1   -- left half: previous shot, right half: next
+      shot_index = (shot_index - 1 + step) % #shots + 1
+      save.set("shot", shot_index)
+    end
     if t.phase == "down" then
       for _, b in ipairs(buttons) do
         if t.x >= b.x and t.x <= b.x + b.w and t.y >= b.y and t.y <= b.y + b.h then b.run() end
@@ -177,6 +204,86 @@ local function draw_result()
     end
   end
   gfx.unlit(false)
+end
+
+-- A dotted line on the 2D screen.
+local function dots(x1, y1, x2, y2, size, r, g, b, a)
+  local steps = math.max(1, math.floor(math.sqrt((x2 - x1) ^ 2 + (y2 - y1) ^ 2) / (size * 1.6)))
+  for k = 0, steps do gfx.circle(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps, size, r, g, b, a) end
+end
+
+-- The bat's path through start, contact and finish, in one view. map turns a path point into screen x, y.
+local function draw_path(path, map)
+  local x1, y1 = map(path[1])
+  local x2, y2 = map(path[2])
+  local x3, y3 = map(path[3])
+  dots(x1, y1, x2, y2, 4, 0.55, 0.7, 1.0)
+  dots(x2, y2, x3, y3, 4, 0.45, 0.95, 0.6)
+  gfx.circle(x1, y1, 9, 0.55, 0.7, 1.0)          -- start
+  gfx.circle(x3, y3, 7, 0.45, 0.95, 0.6)         -- finish
+  gfx.circle(x2, y2, 13, 1.0, 0.6, 0.15)         -- contact: the ball
+  gfx.circle(x2, y2, 7, 1.0, 0.9, 0.7)
+end
+
+-- The shot card: name, what to do, the bat's path from the side and from above, and the take's timing.
+local function draw_card()
+  local shot = shots[shot_index]
+  local x, y, w, h = card.x, card.y, card.w, card.h
+  gfx.rect(x, y, w, h, 0.09, 0.10, 0.14, 0.88)
+  gfx.text("<", x + 12, y + 18, 30, 0.5, 0.55, 0.65)
+  gfx.text(">", x + w - 30, y + 18, 30, 0.5, 0.55, 0.65)
+  gfx.text(shot.name, x + 44, y + 16, 26, 1, 0.85, 0.4)
+  gfx.text(string.format("%d/%d  %s   takes done: %d", shot_index, #shots, shot.id, math.floor(save.get("count-" .. shot.id, 0))),
+           x + 44, y + 52, 16, 0.6, 0.65, 0.75)
+  for i, cue in ipairs(shot.cues) do gfx.text(cue, x + 24, y + 80 + i * 28, 20, 0.9, 0.92, 0.95) end
+
+  -- Side view: you on the left, facing the table on the right.
+  local vx, vy, vw, vh = x + 20, y + 240, w * 0.56, 250
+  gfx.text("SIDE", vx, vy - 4, 14, 0.5, 0.55, 0.65)
+  local function side(p) return vx + (p.f + 0.45) / 1.5 * vw, vy + vh - p.u / 1.9 * vh end
+  local fx, fy = side({ f = -0.45, u = 0 })
+  local tx = side({ f = 1.05, u = 0 })
+  dots(fx, fy, tx, fy, 2, 0.4, 0.42, 0.5)                                   -- floor
+  local ax, ay = side({ f = 0.5, u = 0.76 })
+  local bx = side({ f = 1.05, u = 0.76 })
+  gfx.rect(ax, ay, bx - ax, 6, 0.25, 0.45, 0.85)                            -- table top
+  local lx = side({ f = 0.6, u = 0 })
+  gfx.rect(lx, ay + 6, 4, fy - ay - 6, 0.25, 0.3, 0.45)                     -- table leg
+  local hx, hy = side({ f = 0, u = 0.95 })
+  local nx, ny = side({ f = 0.05, u = 1.45 })
+  dots(hx, hy, nx, ny, 3, 0.6, 0.6, 0.65)                                   -- body, leaning in
+  local kx, ky = side({ f = -0.1, u = 0 })
+  local k2x = side({ f = 0.15, u = 0 })
+  dots(hx, hy, kx, ky, 3, 0.6, 0.6, 0.65)                                   -- legs
+  dots(hx, hy, k2x, ky, 3, 0.6, 0.6, 0.65)
+  local px, py = side({ f = 0.07, u = 1.62 })
+  gfx.circle(px, py, 12, 0.6, 0.6, 0.65)                                    -- head
+  draw_path(shot.path, side)
+
+  -- From above: the table at the top, you below it; right of the picture is your bat side.
+  local ox, oy, ow, oh = vx + vw + 20, vy + 22, w - vw - 60, vh - 22
+  gfx.text("ABOVE", ox, oy - 26, 14, 0.5, 0.55, 0.65)
+  local function above(p) return ox + (p.s + 0.7) / 1.4 * ow, oy + oh - (p.f + 0.45) / 1.5 * oh end
+  local t1x, t1y = above({ s = -0.7, f = 1.05 })
+  local t2x, t2y = above({ s = 0.7, f = 0.5 })
+  gfx.rect(t1x, t1y, t2x - t1x, t2y - t1y, 0.12, 0.25, 0.5)                 -- table
+  for _, foot in ipairs({ -0.22, 0.22 }) do
+    local qx, qy = above({ s = foot, f = 0 })
+    gfx.circle(qx, qy, 9, 0.6, 0.6, 0.65)                                   -- feet
+  end
+  draw_path(shot.path, above)
+
+  -- Timing: ticks, then the take; the high beep is the hit, the low beep the end.
+  local bx0, by0, bw0 = x + 24, y + h - 70, w - 48
+  gfx.rect(bx0, by0, bw0, 8, 0.25, 0.27, 0.35)
+  local cx = bx0 + shot.contact / shot.length * bw0
+  gfx.rect(cx - 3, by0 - 10, 6, 28, 1.0, 0.6, 0.15)
+  gfx.text(string.format("HIT %.1fs", shot.contact), cx - 40, by0 + 22, 16, 1.0, 0.7, 0.3)
+  gfx.text(string.format("END %.1fs", shot.length), bx0 + bw0 - 110, by0 - 24, 16, 0.6, 0.65, 0.75)
+  if state == "recording" then
+    gfx.rect(bx0, by0, math.min(1, (sys.real_time() - record_start) / shot.length) * bw0, 8, 1, 0.35, 0.35)
+  end
+  gfx.text("swipe: " .. shot.swipe, x + 24, y + h - 30, 14, 0.55, 0.6, 0.7)
 end
 
 function draw()
@@ -235,7 +342,9 @@ function draw()
     end
   end
 
-  local left, top = gfx.safe()
+  local left, top, right = gfx.safe()
+  card.x, card.y, card.w, card.h = left + 20, top + 100, w - left - right - 40, 640
+  if not showing_result then draw_card() end
   gfx.text(showing_result and "MOCAP  -  SAM 3D REPLAY" or "MOCAP", left + 80, top + 20, 30, 1, 1, 1)
   gfx.text("takes saved: " .. takes, left + 80, top + 62, 18, 0.6, 0.65, 0.75)
 
