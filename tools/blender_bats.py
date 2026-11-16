@@ -42,18 +42,21 @@ def hand_size(repo):
         namespace["build"]()
     armature = bpy.data.objects["mannequin"]
     wrist = armature.matrix_world @ armature.data.bones["hand.L"].head_local
-    points = []
+    points, faces = [], []
     for obj in bpy.data.objects:
         if obj.type != "MESH" or "hand.L" not in obj.vertex_groups:
             continue
         group = obj.vertex_groups["hand.L"].index
+        index = {}
         for vert in obj.data.vertices:
             if any(g.group == group and g.weight > 0.5 for g in vert.groups):
+                index[vert.index] = len(points)
                 points.append(obj.matrix_world @ vert.co - wrist)
+        faces += [[index[i] for i in poly.vertices] for poly in obj.data.polygons if all(i in index for i in poly.vertices)]
     if not points:
         raise SystemExit("couldn't find the mannequin's left hand (vertex group 'hand.L')")
     p = np.array([tuple(q) for q in points])
-    return p.min(axis=0), p.max(axis=0)
+    return p.min(axis=0), p.max(axis=0), ([tuple(q) for q in points], faces)
 
 
 # ---------------------------------------------------------------- textures and materials
@@ -121,39 +124,43 @@ def disc(bm, centre, rx, rz, thickness, slot, segments=56):
     finish(bm, made, slot)
 
 
-def tape_band(bm, uv, rng, x, y_range, z_half, slot, tilt=0.0, lean=0.0, width=TAPE_WIDTH, flap=0.0):
+def tape_band(bm, uv, rng, x, y_range, z_half, slot, tilt=0.0, lean=0.0, width=TAPE_WIDTH, flap=0.0,
+              crumple=1.0, one_sided=False):
     """One wrap of tape round a rounded-rectangle bundle (y_range front to back, ±z_half up and down), centred at x
-    along the hand, tipped by tilt (about up) and lean (about front-back). Crumpled a little. A flap > 0 leaves
-    that much loose end hanging off the bottom."""
+    along the hand, tipped by tilt (about up) and lean (about front-back). A flap > 0 leaves that much loose end
+    hanging off the bottom.
+    crumple scales the wrinkles. one_sided makes a bare surface, for the Shrinkwrap and Solidify modifiers."""
     y0, y1 = y_range
     cy, hy, hz = (y0 + y1) / 2, (y1 - y0) / 2 + TAPE_THICK, z_half + TAPE_THICK
     corner = min(hy, hz) * 0.7
-    # The loop's path in the y-z plane, as points with outward directions.
     path = []
     straight_y, straight_z = hy - corner, hz - corner
     for q, (sy, sz) in enumerate(((1, 1), (-1, 1), (-1, -1), (1, -1))):
         start = math.pi / 2 * q
-        for k in range(10):
-            a = start + math.pi / 2 * k / 9
+        for k in range(12):
+            a = start + math.pi / 2 * k / 11
             n = Vector((0, math.cos(a), math.sin(a)))
             path.append((Vector((0, cy + sy * straight_y + corner * math.cos(a), sz * straight_z + corner * math.sin(a))), n))
+    loop_points = len(path)
+    across = 4
+    turn = Matrix.Rotation(tilt, 3, "Z") @ Matrix.Rotation(lean, 3, "Y")
+    offsets = [(j / (across - 1) - 0.5) * width for j in range(across)]
+
     path.append(path[0])
     if flap > 0:   # a loose end: continues off the bottom and droops
         last, n = path[-1]
-        for k in range(1, 6):
-            path.append((last + Vector((0, -0.004 * k, -flap * k / 5)), n))
-    across = 4
-    turn = Matrix.Rotation(tilt, 3, "Z") @ Matrix.Rotation(lean, 3, "Y")
+        for k in range(1, 5):
+            path.append((last + Vector((0, -0.003 * k, -flap * k / 4)), n))
+
     rows_out, rows_in, lengths = [], [], [0.0]
     for i, (p, n) in enumerate(path):
         if i:
             lengths.append(lengths[-1] + (p - path[i - 1][0]).length)
-        bump = rng.normal(0, 0.0007)
+        bump = abs(rng.normal(0, 0.0007)) * crumple
         out_row, in_row = [], []
-        for j in range(across):
-            s = (j / (across - 1) - 0.5) * width
-            wrinkle = rng.normal(0, 0.0004)
-            base = Vector((s + rng.normal(0, 0.0006), p.y, p.z)) + n * (bump + wrinkle)
+        for s in offsets:
+            wrinkle = abs(rng.normal(0, 0.0004)) * crumple
+            base = Vector((s + rng.normal(0, 0.0005 * crumple), p.y, p.z)) + n * (bump + wrinkle)
             out_row.append(bm.verts.new(turn @ (base + n * TAPE_THICK) + Vector((x, 0, 0))))
             in_row.append(bm.verts.new(turn @ base + Vector((x, 0, 0))))
         rows_out.append(out_row)
@@ -162,19 +169,19 @@ def tape_band(bm, uv, rng, x, y_range, z_half, slot, tilt=0.0, lean=0.0, width=T
     for i in range(len(path) - 1):
         for j in range(across - 1):
             corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
-            for rows, order in ((rows_out, corners), (rows_in, corners[::-1])):
+            for rows, order in ((rows_out, corners),) if one_sided else ((rows_out, corners), (rows_in, corners[::-1])):
                 face = bm.faces.new([rows[a][b] for a, b in order])
                 for loop, (a, b) in zip(face.loops, order):
                     loop[uv].uv = (lengths[a] / TEXTURE_METRES, (b / (across - 1)) * width / TEXTURE_METRES)
                 made.append(face)
-        for j in (0, across - 1):   # the tape's two edges
+        for j in () if one_sided else (0, across - 1):   # the tape's two edges
             made.append(bm.faces.new((rows_out[i][j], rows_out[i + 1][j], rows_in[i + 1][j], rows_in[i][j])))
     for f in made:
         f.material_index = slot
         f.smooth = True
 
 
-def build(low, high):
+def build(low, high, hand):
     """The bat and tape round a hand that spans low..high from the wrist (x along, y front-back, z up)."""
     rng = np.random.default_rng(11)
     for obj in list(bpy.data.objects):
@@ -204,20 +211,56 @@ def build(low, high):
     disc(bm, (blade_x, handle_y - 0.004, mid_z), 0.076, 0.071, 0.002, 2)              # red rubber, palm side
     disc(bm, (blade_x, handle_y + 0.004, mid_z), 0.076, 0.071, 0.002, 3)              # black rubber, back
 
-    # A lot of tape: wraps round hand and handle together, crooked and overlapping.
+    # Tape: five wraps. Three (wrist end, knuckles, the blade's neck) are shrink-wrapped onto hand and handle like
+    # a skin, by Blender's Shrinkwrap modifier, then given thickness; only the two round the middle of the hand
+    # stand a little proud and crumpled.
     bundle_y = (handle_y - handle_t / 2, hand_back)
     bundle_z = max(hand_half, handle_h / 2)
-    xs = np.linspace(0.015, hand_len - 0.01, 8)
-    for i, x in enumerate(xs):
-        tape_band(bm, uv, rng, float(x), bundle_y, bundle_z * rng.uniform(0.95, 1.08), 4,
-                  tilt=rng.uniform(-0.12, 0.12), lean=rng.uniform(-0.35, 0.35), flap=0.035 if i == 5 else 0.0)
-    # Across the throat, where the blade joins: the handle alone, wrapped criss-cross.
-    throat = (handle_y - handle_t * 0.8 / 2 - 0.002, handle_y + handle_t * 0.8 / 2 + 0.002)
-    for lean in (-0.55, 0.5, 0.0):
-        tape_band(bm, uv, rng, handle_end + 0.02, throat, handle_h * 0.78, 4, lean=lean, tilt=rng.uniform(-0.1, 0.1))
-    # Two long wraps from the back of the hand diagonally onto the throat.
-    for lean in (-0.75, 0.8):
-        tape_band(bm, uv, rng, hand_len * 0.8, bundle_y, bundle_z * 1.05, 4, lean=lean, width=TAPE_WIDTH * 0.9)
+    proud = bmesh.new()
+    proud_uv = proud.loops.layers.uv.verify()
+    for at in (0.42, 0.62):
+        tape_band(proud, proud_uv, rng, hand_len * at, bundle_y, bundle_z * 1.05, 0, tilt=rng.uniform(-0.1, 0.1),
+                  lean=rng.uniform(-0.25, 0.25), crumple=2.5, one_sided=True)
+    skin = bmesh.new()
+    skin_uv = skin.loops.layers.uv.verify()
+    for at in (0.12, 0.85):
+        tape_band(skin, skin_uv, rng, hand_len * at, bundle_y, bundle_z * 1.05, 0, tilt=rng.uniform(-0.06, 0.06),
+                  lean=rng.uniform(-0.15, 0.15), crumple=0.0, one_sided=True)
+    throat = (handle_y - handle_t * 0.8 / 2 - 0.004, handle_y + handle_t * 0.8 / 2 + 0.004)
+    tape_band(skin, skin_uv, rng, handle_end + 0.02, throat, handle_h * 0.9, 0, lean=0.15, crumple=0.0, one_sided=True)
+
+    # What the tape shrinks onto: the hand plus the bat so far.
+    target_mesh = bpy.data.meshes.new("wrap target")
+    bm.to_mesh(target_mesh)
+    target_bm = bmesh.new()
+    target_bm.from_mesh(target_mesh)
+    hand_points, hand_faces = hand
+    verts = [target_bm.verts.new(q) for q in hand_points]
+    for f in hand_faces:
+        try:
+            target_bm.faces.new([verts[i] for i in f])
+        except ValueError:
+            pass
+    target_bm.to_mesh(target_mesh)
+    target_bm.free()
+    target = bpy.data.objects.new("wrap target", target_mesh)
+    bpy.context.scene.collection.objects.link(target)
+    for name, surface, offset in (("tape", skin, 0.0005), ("tape proud", proud, 0.0025)):
+        tape_mesh = bpy.data.meshes.new(name)
+        surface.to_mesh(tape_mesh)
+        surface.free()
+        tape_mesh.materials.append(bpy.data.materials["duct tape"])
+        tape = bpy.data.objects.new(name, tape_mesh)
+        bpy.context.scene.collection.objects.link(tape)
+        wrap = tape.modifiers.new("shrink", "SHRINKWRAP")
+        wrap.target, wrap.wrap_method, wrap.wrap_mode, wrap.offset = target, "NEAREST_SURFACEPOINT", "OUTSIDE_SURFACE", offset
+        calm = tape.modifiers.new("calm", "SMOOTH")   # irons out shards where neighbours snapped to different faces
+        calm.factor, calm.iterations = 0.8, 6
+        again = tape.modifiers.new("shrink again", "SHRINKWRAP")
+        again.target, again.wrap_method, again.wrap_mode, again.offset = target, "NEAREST_SURFACEPOINT", "OUTSIDE_SURFACE", offset
+        thick = tape.modifiers.new("thickness", "SOLIDIFY")
+        thick.thickness, thick.offset = TAPE_THICK, 1.0
+    # ponytail: the exporter applies the modifiers (export_apply); the target is left out of the export by selection.
     bm.to_mesh(mesh)
     bm.free()
     return bat
@@ -226,9 +269,12 @@ def build(low, high):
 if __name__ == "__main__":
     args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     repo = find_repo()
-    low, high = hand_size(repo)
+    low, high, hand_surface = hand_size(repo)
     print(f"left hand from the wrist: along {high[0]:.3f} m, up/down {low[2]:.3f} to {high[2]:.3f}, front/back {low[1]:.3f} to {high[1]:.3f}")
-    bat = build(low, high)
+    bat = build(low, high, hand_surface)
     out = Path(args[0]) if args else repo / "games" / "mannequin" / "bat.glb"
-    bpy.ops.export_scene.gltf(filepath=str(out.resolve()), export_format="GLB", export_yup=True)
+    for obj in bpy.data.objects:
+        obj.select_set(obj.name in ("taped bat", "tape", "tape proud"))
+    bpy.ops.export_scene.gltf(filepath=str(out.resolve()), export_format="GLB", export_yup=True, use_selection=True,
+                              export_apply=True)
     print("exported", out)
