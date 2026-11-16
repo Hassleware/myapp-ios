@@ -7,8 +7,8 @@ mannequin) and builds to fit it: a wooden handle laid along the palm, the blade 
 one side, black the other), and a dozen crooked, crumpled wraps of silver duct tape round hand and handle, some
 across the blade's neck, one end hanging loose. The tape has a generated texture: woven backing under silver.
 
-The bat is modelled round the left wrist in the T-pose (Blender axes: +x along the hand, +z up). The game
-places it on each hand every frame, turned round for the right hand.
+The bat is modelled round the left wrist in the T-pose (Blender axes: +x along the hand, +z up). The right
+hand's bat is a mirror image of it. The game places each on its hand every frame.
 """
 
 import math
@@ -202,7 +202,7 @@ def build(low, high, hand):
     mid_z = (low[2] + high[2]) / 2
     # The handle lies along the palm (the front of the hand), and the blade carries on past the fingertips.
     handle_t, handle_h = 0.022, 0.026
-    handle_y = hand_front - handle_t / 2
+    handle_y = hand_back + handle_t / 2   # the palm faces +y (back) in the T-pose
     handle_end = hand_len * 0.92
     rounded_box(bm, (handle_end / 2 + 0.005, handle_y, mid_z), (handle_end - 0.01, handle_t, handle_h), 0.006, 0)
     rounded_box(bm, (handle_end + 0.02, handle_y, mid_z), (0.05, handle_t * 0.8, handle_h * 1.5), 0.008, 0)   # the flared throat
@@ -214,7 +214,7 @@ def build(low, high, hand):
     # Tape: five wraps. Three (wrist end, knuckles, the blade's neck) are shrink-wrapped onto hand and handle like
     # a skin, by Blender's Shrinkwrap modifier, then given thickness; only the two round the middle of the hand
     # stand a little proud and crumpled.
-    bundle_y = (handle_y - handle_t / 2, hand_back)
+    bundle_y = (hand_front, handle_y + handle_t / 2)
     bundle_z = max(hand_half, handle_h / 2)
     proud = bmesh.new()
     proud_uv = proud.loops.layers.uv.verify()
@@ -273,8 +273,24 @@ if __name__ == "__main__":
     print(f"left hand from the wrist: along {high[0]:.3f} m, up/down {low[2]:.3f} to {high[2]:.3f}, front/back {low[1]:.3f} to {high[1]:.3f}")
     bat = build(low, high, hand_surface)
     out = Path(args[0]) if args else repo / "games" / "mannequin" / "bat.glb"
-    for obj in bpy.data.objects:
-        obj.select_set(obj.name in ("taped bat", "tape", "tape proud"))
-    bpy.ops.export_scene.gltf(filepath=str(out.resolve()), export_format="GLB", export_yup=True, use_selection=True,
-                              export_apply=True)
+    # One object for the left hand (modifiers applied), and a mirror image of it for the right hand.
+    bpy.ops.object.select_all(action="DESELECT")
+    for name in ("taped bat", "tape", "tape proud"):
+        bpy.data.objects[name].select_set(True)
+    bpy.context.view_layer.objects.active = bat
+    bpy.ops.object.convert(target="MESH")
+    bpy.ops.object.join()
+    left = bpy.context.view_layer.objects.active
+    left.name = "bat.L"
+    right = left.copy()
+    right.data = left.data.copy()
+    right.name = "bat.R"
+    bpy.context.scene.collection.objects.link(right)
+    right.scale.x = -1
+    bpy.ops.object.select_all(action="DESELECT")
+    right.select_set(True)
+    bpy.context.view_layer.objects.active = right
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)   # also turns the faces the right way out
+    bpy.data.objects.remove(bpy.data.objects["wrap target"])
+    bpy.ops.export_scene.gltf(filepath=str(out.resolve()), export_format="GLB", export_yup=True)
     print("exported", out)

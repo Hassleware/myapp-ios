@@ -252,13 +252,12 @@ function init()
   for _, n in ipairs(model.nodes(dummy)) do
     if n.name == "hips" and n.parent then hips_parent = model.nodes(dummy)[n.parent].name end
   end
-  -- The bat is modelled on the left hand in the T-pose; the right hand gets it turned round (half a turn about up).
-  -- Its turn relative to each hand bone is worked out once from the T-pose, then it follows the hand.
+  -- bat.glb holds bat.L and bat.R (a mirror image), each modelled on its hand in the T-pose. Its turn relative to
+  -- the hand bone is worked out once from the T-pose, then it follows the hand.
   hands = {}
   for _, side in ipairs({ "L", "R" }) do
     local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, "hand." .. side)
-    local facing = side == "L" and { 0, 0, 0, 1 } or { 0, 1, 0, 0 }
-    hands[#hands + 1] = { bone = "hand." .. side, offset = qmul(qinv({ qx, qy, qz, qw }), facing) }
+    hands[#hands + 1] = { bone = "hand." .. side, node = "bat." .. side, offset = qinv({ qx, qy, qz, qw }) }
   end
   fall.offset, fall.speed, fall.started, fall.solved, hips_drop = 0, 0, false, false, 0
   play(1)
@@ -288,7 +287,7 @@ function draw()
   for _, hand in ipairs(hands) do
     local wrist, turn = joint(hand.bone)
     local q = qmul(turn, hand.offset)
-    model.draw(bat, wrist[1], wrist[2], wrist[3], q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1)
+    model.draw(bat, wrist[1], wrist[2], wrist[3], q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
   end
   if ik_on then   -- marks under planted heels and toes
     gfx.unlit(true)
