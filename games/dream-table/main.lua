@@ -28,6 +28,69 @@ local state, server, last, bounces = "serve", "player", nil, {}
 local message, message_time, timer = "", 0, 0
 local key_was_down = false
 
+-- ---------------------------------------------------------------- the opponent: the wooden mannequin
+-- It plays the shots you recorded with the mocap game. mannequin.glb is made by tools/blender_mannequin.py from
+-- captures/shots-<n>-<k>-<shot>-sam3d.npz, one clip per shot, each with the hit CONTACT seconds in.
+-- For each return it picks a clip by the ball (forehand or backhand side, how high), starts it so the recorded hit
+-- lands when the ball arrives, and stands where its bat hand meets the ball.
+-- ponytail: it slides into place (no foot IK here yet); add the mannequin game's feet when it shows.
+local dummy = model.load("mannequin.glb")
+local bat_model = model.load("bat.glb")
+local anim = lib.animation(dummy)
+local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
+local moves, hands = {}, {}
+local body = { x = 0, z = AI_Z - 0.5, tx = 0, tz = AI_Z - 0.5, turn = { 0, 0, 0, 1 }, move = nil, ball_seen = nil }
+
+local function qmul(a, b) return { lib.quat_mul(a[1], a[2], a[3], a[4], b[1], b[2], b[3], b[4]) } end
+local function rotate(q, x, y, z) return lib.quat_rotate(q[1], q[2], q[3], q[4], x, y, z) end
+local function yaw_turn(angle) return { 0, math.sin(angle / 2), 0, math.cos(angle / 2) } end
+
+-- Reads every shot clip once: which shot it is, which way it faces, and where the bat hand is at the hit.
+local function learn_moves()
+  moves = {}
+  local scratch = model.animator(dummy)
+  for _, clip in ipairs(model.clips(dummy)) do
+    local side, kind = clip.name:match("%-(%a%a)%-(%a+)$")
+    if side == "fh" or side == "bh" then
+      model.pose(dummy, scratch, clip.name, 0, 1)
+      local lx, _, lz = model.joint(dummy, scratch, "thigh.L")
+      local rx, _, rz = model.joint(dummy, scratch, "thigh.R")
+      local fx, fz = -(lz - rz), lx - rx                  -- facing, from the body's left (+x in the T-pose faces +z)
+      local turn = yaw_turn(-math.atan(fx, fz))           -- turned to face +z: the player's end of the table
+      model.pose(dummy, scratch, clip.name, math.min(CONTACT, clip.duration), 1)
+      local hx, hy, hz = rotate(turn, model.joint(dummy, scratch, "hand.R"))
+      moves[#moves + 1] = { clip = clip.name, side = side, kind = kind, turn = turn, hand = { hx, hy, hz } }
+    end
+  end
+  hands = {}
+  for _, side in ipairs({ "L", "R" }) do
+    local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, "hand." .. side)
+    hands[#hands + 1] = { bone = "hand." .. side, node = "bat." .. side, offset = { -qx, -qy, -qz, qw } }
+  end
+  if moves[1] then
+    body.move, body.turn = moves[1], moves[1].turn
+    anim:play(moves[1].clip, { loop = false, speed = 0, time = 0.3, fade = 0 })   -- standing ready
+  end
+end
+
+-- The shot for a ball arriving at x, height y: forehand on its right (-x, as it faces +z), backhand on its left.
+-- Among those, the clip whose recorded hit is nearest that height (the body can slide sideways and forward, not up),
+-- nudged toward the kind of shot that suits the height. A little randomness so it doesn't always play the same.
+local PREFER = { high = { "smash", "drive", "loop" }, low = { "push", "loop", "flick", "block", "drive" },
+                 mid = { "drive", "loop", "block", "flick", "push", "smash" } }
+local function choose(x, y)
+  local side = x < body.x and "fh" or "bh"
+  local height = y - TABLE_Y > 0.45 and "high" or y - TABLE_Y < 0.12 and "low" or "mid"
+  local best, best_cost = moves[1], math.huge
+  for _, m in ipairs(moves) do
+    local cost = math.abs(m.hand[2] - y) + (m.side == side and 0 or 0.5) + math.random() * 0.06
+    local rank = 0.3
+    for i, kind in ipairs(PREFER[height]) do if kind == m.kind then rank = (i - 1) * 0.04 end end
+    if cost + rank < best_cost then best, best_cost = m, cost + rank end
+  end
+  return best
+end
+
 local function side_of(z) return z > 0 and "player" or "cpu" end
 local function other(who) return who == "player" and "cpu" or "player" end
 local function say(text) message, message_time = text, sys.real_time() end
@@ -114,6 +177,7 @@ local function new_game()
 end
 
 function init()
+  learn_moves()
   new_game()
 end
 
@@ -123,10 +187,10 @@ end
 local function predict(plane)
   local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
   local dt = 1 / 120
-  for _ = 1, 360 do
+  for step = 1, 360 do
     vy = vy - G * dt
     local nz = z + vz * dt
-    if (z - plane) * (nz - plane) <= 0 then return x, y end
+    if (z - plane) * (nz - plane) <= 0 then return x, y, step * dt end
     x, y, z = x + vx * dt, y + vy * dt, nz
     if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
       y, vy = TABLE_Y + R, -vy * BOUNCE
@@ -202,6 +266,20 @@ function fixed_update(dt)
   elseif state == "serve" and server == "cpu" then
     gx, gy = 0.2, TABLE_Y + 0.22
   end
+  -- The mannequin: once a ball is on its way, commit to a shot timed and placed to meet it.
+  if state == "rally" and last == "player" and ball.vz < 0 and ball.z < 0 and body.ball_seen ~= bounces and #moves > 0 then
+    local bx, by, t = predict(AI_Z)
+    if bx then
+      body.ball_seen = bounces   -- one decision per incoming ball
+      local m = choose(bx, by)
+      body.move, body.turn = m, m.turn
+      body.tx, body.tz = bx - m.hand[1], AI_Z - m.hand[3]
+      anim.layers = {}
+      anim:play(m.clip, { loop = false, fade = 0, time = math.max(0, CONTACT - t) })
+    end
+  end
+  body.x, body.z = lib.approach(body.x, body.tx, 6, dt), lib.approach(body.z, body.tz, 6, dt)
+
   local dx, dy = gx - cpu.x, gy - cpu.y
   local far = math.sqrt(dx * dx + dy * dy)
   local reach = AI_SPEED * dt
@@ -220,6 +298,7 @@ end
 
 function update(dt)
   lib.update(dt)
+  anim:update(dt)
   camera()   -- so gfx.unproject below uses this camera
 
   -- Pointing: hold the mouse button (or a finger) and move. The paddle follows the point on its plane.
@@ -292,8 +371,21 @@ function draw()
   gfx.blend("alpha")
   gfx.cube(0, TABLE_Y + 0.07, 0, (HALF_W + 0.15) * 2, 0.14, 0.004, 0.75, 0.8, 1, 0, 0.35)
 
+  -- The mannequin with a taped bat in each hand.
+  gfx.blend("opaque")
+  if #moves > 0 then
+    local q = body.turn
+    model.draw(dummy, body.x, 0, body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, anim.animator)
+    for _, hand in ipairs(hands) do
+      local x, y, z, qx, qy, qz, qw = model.joint(dummy, anim.animator, hand.bone)
+      local wx, wy, wz = rotate(q, x, y, z)
+      local t = qmul(qmul(q, { qx, qy, qz, qw }), hand.offset)
+      model.draw(bat_model, body.x + wx, wy, body.z + wz, t[1], t[2], t[3], t[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
+    end
+  end
+  gfx.blend("alpha")
   -- Paddles: the computer's in blue, yours in red and slightly see-through so it never hides the ball.
-  paddle(cpu.x, cpu.y, AI_Z, 0.2, 0.45, 1.0, 1)
+  if #moves == 0 then paddle(cpu.x, cpu.y, AI_Z, 0.2, 0.45, 1.0, 1) end   -- no mannequin clips: the old blue paddle
   paddle(me.x, me.y, PADDLE_Z, 1.0, 0.25, 0.3, 0.8)
   gfx.blend("opaque")
 

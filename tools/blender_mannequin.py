@@ -360,6 +360,7 @@ def retarget(armature, npz_path, name=None):
     for old in [a for a in bpy.data.actions if a.name == name or a.name.startswith(name + ".")]:
         bpy.data.actions.remove(old)   # an earlier copy of this take, saved in the .blend
     action = bpy.data.actions.new(name)
+    action.use_fake_user = True   # kept (and exported) when the next take is retargeted too
     armature.animation_data_create()
     armature.animation_data.action = action
     order = list(BONES)   # parents come before children in BONES
@@ -423,14 +424,17 @@ if __name__ == "__main__":
         print("using", model)
     else:
         armature = build()
-    take = args[0] if args else None
-    if take is None:
+    # Any number of takes (each becomes a clip named after it), then optionally the .glb to export:
+    #   ... -- captures/shots-2-1-fh-drive-sam3d.npz captures/shots-2-2-bh-push-sam3d.npz games/dream-table/mannequin.glb
+    takes = [a for a in args if a.endswith(".npz")]
+    out = next((a for a in args if a.endswith(".glb")), None)
+    if not takes and "-" not in args:
         found = [p for p in (repo / "captures").glob("*-sam3d.npz") if not p.name.startswith("zz-")]
-        take = str(max(found, key=lambda p: p.stat().st_mtime)) if found else "-"
-    if take != "-":
+        takes = [str(max(found, key=lambda p: p.stat().st_mtime))] if found else []
+    for take in takes:
         retarget(armature, take)
-    if len(args) > 1:
-        Path(args[1]).parent.mkdir(parents=True, exist_ok=True)
-        bpy.ops.export_scene.gltf(filepath=str(Path(args[1]).resolve()), export_format="GLB", export_animations=True,
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        bpy.ops.export_scene.gltf(filepath=str(Path(out).resolve()), export_format="GLB", export_animations=True,
                                   export_yup=True)
-        print("exported", args[1])
+        print("exported", out)

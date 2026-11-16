@@ -175,7 +175,7 @@ end
 -- ---------------------------------------------------------------- animation player
 
 -- Plays a model's clips with cross-fades, timed events and (optionally) movement taken from the animation.
---   local a = lib.animation(m)          a:play("walk", {fade = 0.2, loop = true, speed = 1})
+--   local a = lib.animation(m)          a:play("walk", {fade = 0.2, loop = true, speed = 1, time = 0})   time: start part way in
 --   a:event("walk", 0.3, function() ... end)     a:update(dt)     model.draw(m, x,y,z, qx,qy,qz,qw, s,s,s, 1,1,1,1, a.animator)
 function lib.animation(m)
   local a = { model = m, animator = model.animator(m), layers = {}, events = {}, durations = {} }
@@ -186,7 +186,7 @@ function lib.animation(m)
     local top = self.layers[#self.layers]
     if top and top.clip == clip and not options.restart then return end
     local fade = options.fade or 0.2
-    self.layers[#self.layers + 1] = { clip = clip, time = 0, weight = (fade <= 0 or not top) and 1 or 0, fade = fade,
+    self.layers[#self.layers + 1] = { clip = clip, time = options.time or 0, weight = (fade <= 0 or not top) and 1 or 0, fade = fade,
                                       loop = options.loop ~= false, speed = options.speed or 1 }
   end
 
