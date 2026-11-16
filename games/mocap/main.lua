@@ -3,14 +3,16 @@
 -- graphics card, a stronger model with hands and feet, which writes captures/<name>-sam3d.bvh. The phone shows the PC's progress, then replays
 -- that result (REPLAY switches between that and the live camera).
 -- Prop the phone up about 3 metres away at waist height, or have someone hold it, and keep the whole body in view.
--- Shots: while recording it beeps for one table tennis shot after another: two ticks, then a high beep to hit on,
--- every PERIOD seconds. Play a different shot on each high beep and stop whenever. Takes are named shots-1,
+-- Shots: a voice calls them. "Three, two, one, go" starts the recording; then every PERIOD seconds "ready" and
+-- "hit!": play a different shot on each "hit", and "stopped" when it ends. Takes are named shots-1,
 -- shots-2...; the PC cuts them into one clip per shot and guesses which shot each is (tools/split_shots.py).
 -- Hands free: raise both hands over your head and hold them there for a second to start, and again to stop.
 
 local lib = include("lib.lua")
 local FIRST_HIT, PERIOD = 4.0, 4.0   -- keep the same as tools/split_shots.py
-local sounds = { tick = audio.load("tick.wav"), hit = audio.load("hit.wav"), done = audio.load("end.wav") }
+local say = {}   -- spoken words, made with Windows' own voice and trimmed to start at once
+for _, word in ipairs({ "three", "two", "one", "go", "ready", "hit", "stopped" }) do say[word] = audio.load(word .. ".wav") end
+local READY_BEFORE = 1.2    -- "ready" comes this many seconds before "hit"
 local next_beep = 0
 local HANDS_UP = 0.8        -- metres above the hips that both hands must be, held for HOLD seconds, to start or stop
 local HOLD = 1.0
@@ -108,12 +110,12 @@ buttons = {
   { label = function() return (state == "recording" or state == "countdown") and "STOP" or "RECORD" end, run = function()
       if state == "recording" or state == "countdown" then
         mocap.record(false)
-        audio.play(sounds.done)
+        audio.play(say.stopped)
         state, status = "idle", string.format("Recorded %d frames. SEND to save it on the PC.", mocap.frames())
       elseif started and state == "idle" then
         showing_result = false
         state, countdown = "countdown", 3
-        audio.play(sounds.tick)
+        audio.play(say.three)
       end
     end },
   { label = function() return "SEND" end, run = function() if state == "idle" then send() end end },
@@ -174,18 +176,19 @@ function update(dt)
   if state == "countdown" then
     local before = math.ceil(countdown)
     countdown = countdown - dt
-    if math.ceil(countdown) < before then audio.play(sounds.tick) end   -- a tick each second; the last starts it
+    local now = math.ceil(countdown)
+    if now < before then audio.play(now == 2 and say.two or now == 1 and say.one or say.go) end
     if countdown <= 0 then
       mocap.record(true)
       state, record_start, next_beep = "recording", sys.real_time(), 0
       input.haptic("medium")
     end
   elseif state == "recording" then
-    -- Beeps number 3k and 3k+1 are the ticks before shot k's hit; 3k+2 is the hit.
-    local k, part = next_beep // 3, next_beep % 3
-    local at = FIRST_HIT + k * PERIOD - (part == 0 and 1.0 or part == 1 and 0.5 or 0)
+    -- Calls number 2k ("ready") and 2k+1 ("hit!") belong to shot k.
+    local k, part = next_beep // 2, next_beep % 2
+    local at = FIRST_HIT + k * PERIOD - (part == 0 and READY_BEFORE or 0)
     if sys.real_time() - record_start >= at then
-      audio.play(part == 2 and sounds.hit or sounds.tick)
+      audio.play(part == 1 and say.hit or say.ready)
       next_beep = next_beep + 1
     end
   end
