@@ -7,7 +7,8 @@
 --   * a foot the animation has low and nearly still is planted: eased onto the ground and held where it landed,
 --     so it can't slide; a foot in mid-step follows the animation, but never goes through the ground;
 --   * if a foot can't reach its spot, the hips lower just enough;
---   * thigh and shin turn (two-bone IK) to put the ankle there, the knee bending the way the animation had it.
+--   * thigh and shin turn (two-bone IK) to put the ankle there, the knee bending the way the animation had it;
+--   * a planted foot tilts so its sole lies flat on the ground below it, heel and toes down, keeping its heading.
 
 local lib = include("lib.lua")
 
@@ -68,9 +69,18 @@ local function set_turn(name, parent_turn, turn)
   model["local"](dummy, anim.animator, name, t1, t2, t3, q[1], q[2], q[3], q[4], s1, s2, s3)
 end
 
+-- The ground's height under a point, and which way the ground faces there.
 local function ground_below(p)
-  local hit, _, y = phys.raycast(p[1], p[2] + 0.8, p[3], 0, -1, 0, 3)
-  return hit and y or 0
+  local hit, _, y, _, nx, ny, nz = phys.raycast(p[1], p[2] + 0.8, p[3], 0, -1, 0, 3)
+  if not hit then return 0, v(0, 1, 0) end
+  return y, v(nx, ny, nz)
+end
+
+-- Part of a turn: all of it at w = 1, none at w = 0.
+local function partly(q, w)
+  local p = { q[1] * w, q[2] * w, q[3] * w, 1 + (q[4] - 1) * w }
+  local l = math.sqrt(p[1] ^ 2 + p[2] ^ 2 + p[3] ^ 2 + p[4] ^ 2)
+  return { p[1] / l, p[2] / l, p[3] / l, p[4] / l }
 end
 
 -- ---------------------------------------------------------------- the IK
@@ -81,7 +91,9 @@ local function solve_feet(dt)
   for _, leg in ipairs(legs) do
     local ankle = joint(leg.foot)
     local hip = joint(leg.thigh)
-    local floor = ground_below(ankle) + ankle_rest
+    local ground, normal = ground_below(ankle)
+    local floor = ground + ankle_rest
+    leg.normal = normal
     local speed = leg.last and len(sub(ankle, leg.last)) / math.max(dt, 1e-4) or 0
     leg.last = ankle
     local down = ankle[2] - ankle_rest < PLANT_HEIGHT and speed < PLANT_SPEED
@@ -134,7 +146,11 @@ local function solve_feet(dt)
     local new_shin = qmul(from_to(shin_dir, sub(new_ankle, new_knee)), qmul(turn_thigh, shin_turn))
     set_turn(leg.thigh, hips_turn, new_thigh)
     set_turn(leg.shin, new_thigh, new_shin)
-    set_turn(leg.foot, new_shin, foot_turn)   -- the foot keeps the angle the animation gave it
+    -- Flat on the ground: turn the sole's "up" onto the ground's, as much as the foot is planted. The sole's up
+    -- is found from the T-pose, where the foot stands flat; turning only that keeps the foot's heading.
+    local sole_up = rotate(foot_turn, leg.sole_up)
+    local flat = qmul(partly(from_to(sole_up, leg.normal), leg.weight), foot_turn)
+    set_turn(leg.foot, new_shin, flat)
   end
 end
 
@@ -154,6 +170,10 @@ function init()
   end
   local _, rest_y = model.joint(dummy, 0, "foot.L")   -- the ankle's height above the floor in the T-pose
   ankle_rest = rest_y or 0.1
+  for _, leg in ipairs(legs) do   -- which way the sole faces, in the foot's own terms (it stands flat in the T-pose)
+    local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, leg.foot)
+    leg.sole_up = rotate(qinv({ qx, qy, qz, qw }), v(0, 1, 0))
+  end
   for _, n in ipairs(model.nodes(dummy)) do
     if n.name == "hips" and n.parent then hips_parent = model.nodes(dummy)[n.parent].name end
   end
