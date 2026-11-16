@@ -31,41 +31,140 @@ local key_was_down = false
 -- ---------------------------------------------------------------- the opponent: the wooden mannequin
 -- It plays the shots you recorded with the mocap game. mannequin.glb is made by tools/blender_mannequin.py from
 -- captures/shots-<n>-<k>-<shot>-sam3d.npz, one clip per shot, each with the hit CONTACT seconds in.
--- For each return it picks a clip by the ball (forehand or backhand side, how high), starts it so the recorded hit
--- lands when the ball arrives, and stands where its bat hand meets the ball.
--- ponytail: it slides into place (no foot IK here yet); add the mannequin game's feet when it shows.
+-- Every clip also plays mirror-imaged with the bat in the other hand, so 11 recordings give 22 moves.
+-- When you hit the ball it plans the whole return: along the ball's flight it finds where each move's bat could
+-- meet it, picks one (the height should suit the shot, it should not have to run far, and it likes variety),
+-- starts that clip so the recorded hit lands when the ball gets there, and walks to the spot. The ball is only
+-- returned if it really touches the bat: miss, and it's your point.
+-- Feet: planted feet stay put while the body moves, and step (one at a time) when they fall too far behind;
+-- steps the animation makes itself are kept as they are.
 local dummy = model.load("mannequin.glb")
 local bat_model = model.load("bat.glb")
 local anim = lib.animation(dummy)
 local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
-local moves, hands = {}, {}
-local body = { x = 0, z = AI_Z - 0.5, tx = 0, tz = AI_Z - 0.5, turn = { 0, 0, 0, 1 }, move = nil, ball_seen = nil }
+-- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
+local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
+local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it
+local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.2, 0.07   -- a foot this far behind steps, taking this long, this high
+local LIFTED = 0.04                  -- an ankle the animation raises this far is the animation's own step: leave it
+local WALK = 7                       -- how quickly the body heads for its spot (bigger is quicker)
+local CROUCH = 0.3                   -- how far the body may sink (knees bending) to play a high shot on a lower ball
+local moves, hands, bones, legs, effects = {}, {}, {}, {}, {}
+local rest = {}                      -- every bone's turn in the T-pose
+local hips_parent
+local body = { x = 0, y = 0, ty = 0, z = AI_Z - 0.6, tx = 0, tz = AI_Z - 0.6, vx = 0, vz = 0, turn = { 0, 0, 0, 1 },
+               move = nil, plan_for = nil, blade = { 0, 1, AI_Z } }
 
+local function v(x, y, z) return { x, y, z } end
+local function add(a, b) return v(a[1] + b[1], a[2] + b[2], a[3] + b[3]) end
+local function sub(a, b) return v(a[1] - b[1], a[2] - b[2], a[3] - b[3]) end
+local function mul(a, s) return v(a[1] * s, a[2] * s, a[3] * s) end
+local function dot(a, b) return a[1] * b[1] + a[2] * b[2] + a[3] * b[3] end
+local function len(a) return math.sqrt(dot(a, a)) end
+local function unit(a) local l = len(a) return l > 1e-9 and mul(a, 1 / l) or v(0, 1, 0) end
+local function cross(a, b) return v(lib.cross(a[1], a[2], a[3], b[1], b[2], b[3])) end
 local function qmul(a, b) return { lib.quat_mul(a[1], a[2], a[3], a[4], b[1], b[2], b[3], b[4]) } end
-local function rotate(q, x, y, z) return lib.quat_rotate(q[1], q[2], q[3], q[4], x, y, z) end
+local function qinv(q) return { -q[1], -q[2], -q[3], q[4] } end
+local function rot(q, p) return v(lib.quat_rotate(q[1], q[2], q[3], q[4], p[1], p[2], p[3])) end
+local function mirror_turn(q) return { q[1], -q[2], -q[3], q[4] } end   -- the turn seen in a mirror across x = 0
 local function yaw_turn(angle) return { 0, math.sin(angle / 2), 0, math.cos(angle / 2) } end
 
--- Reads every shot clip once: which shot it is, which way it faces, and where the bat hand is at the hit.
+local function from_to(a, b)
+  a, b = unit(a), unit(b)
+  local c = dot(a, b)
+  if c < -0.9999 then
+    local axis = unit(math.abs(a[1]) < 0.9 and cross(a, v(1, 0, 0)) or cross(a, v(0, 1, 0)))
+    return { axis[1], axis[2], axis[3], 0 }
+  end
+  local axis = cross(a, b)
+  local q = { axis[1], axis[2], axis[3], 1 + c }
+  local l = math.sqrt(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2)
+  return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
+end
+
+-- A bone's place and turn inside the model, as animator a has it now.
+local function joint(name, a)
+  local x, y, z, qx, qy, qz, qw = model.joint(dummy, a or anim.animator, name)
+  return v(x, y, z), { qx, qy, qz, qw }
+end
+
+-- Sets a bone's turn inside the model, through its turn within its parent.
+local function set_turn(name, parent_turn, turn, a)
+  local t1, t2, t3, _, _, _, _, s1, s2, s3 = model["local"](dummy, a, name)
+  local q = qmul(qinv(parent_turn), turn)
+  model["local"](dummy, a, name, t1, t2, t3, q[1], q[2], q[3], q[4], s1, s2, s3)
+end
+
+local function partner(name)
+  if name:sub(-2) == ".L" then return name:sub(1, -3) .. ".R" end
+  if name:sub(-2) == ".R" then return name:sub(1, -3) .. ".L" end
+  return name
+end
+
+-- Turns the whole pose into its mirror image: left does what right did, and the other way round.
+local function mirror_pose(a)
+  local new = {}
+  for _, b in ipairs(bones) do
+    local _, t = joint(partner(b.name), a)
+    new[b.name] = qmul(mirror_turn(qmul(t, qinv(rest[partner(b.name)]))), rest[b.name])
+  end
+  local hips = joint("hips", a)
+  local ppos, pturn = joint(hips_parent, a)
+  local at = rot(qinv(pturn), sub(v(-hips[1], hips[2], hips[3]), ppos))
+  local _, _, _, q1, q2, q3, q4, s1, s2, s3 = model["local"](dummy, a, "hips")
+  model["local"](dummy, a, "hips", at[1], at[2], at[3], q1, q2, q3, q4, s1, s2, s3)
+  for _, b in ipairs(bones) do
+    local parent_turn = new[b.parent] or select(2, joint(b.parent, a))
+    set_turn(b.name, parent_turn, new[b.name], a)
+  end
+end
+
+-- Where the middle of a hand's bat blade is inside the model.
+local function blade_in_model(side, a)
+  local wrist, turn = joint("hand." .. side, a)
+  return add(wrist, rot(qmul(turn, hands[side].offset), BLADE[side]))
+end
+
+local function to_world(p) return add(v(body.x, body.y, body.z), rot(body.turn, p)) end
+local function to_model(p) return rot(qinv(body.turn), sub(p, v(body.x, body.y, body.z))) end
+
+-- Reads every shot clip once: which shot, which way it faces, where the blade is at the hit; and its mirror image.
 local function learn_moves()
-  moves = {}
+  moves, bones, legs, hands = {}, {}, {}, {}
+  local nodes = model.nodes(dummy)
+  local function depth(n) local d = 0 while n.parent do d, n = d + 1, nodes[n.parent] end return d end
+  for _, n in ipairs(nodes) do
+    local skeleton = n.name:match("%.[LR]$") or n.name == "hips" or n.name == "spine" or n.name == "chest"
+                     or n.name == "neck" or n.name == "head"
+    if skeleton and n.parent then
+      bones[#bones + 1] = { name = n.name, parent = nodes[n.parent].name, depth = depth(n) }
+      if n.name == "hips" then hips_parent = nodes[n.parent].name end
+    end
+  end
+  table.sort(bones, function(a, b) return a.depth < b.depth end)   -- parents before children
+  for _, b in ipairs(bones) do rest[b.name] = select(2, joint(b.name, 0)) end
+  for _, side in ipairs({ "L", "R" }) do
+    hands[side] = { bone = "hand." .. side, node = "bat." .. side, offset = qinv(rest["hand." .. side]) }
+    local ankle = joint("foot." .. side, 0)
+    legs[#legs + 1] = { thigh = "thigh." .. side, shin = "shin." .. side, foot = "foot." .. side, rest = ankle[2] }
+  end
+
   local scratch = model.animator(dummy)
   for _, clip in ipairs(model.clips(dummy)) do
     local side, kind = clip.name:match("%-(%a%a)%-(%a+)$")
     if side == "fh" or side == "bh" then
       model.pose(dummy, scratch, clip.name, 0, 1)
-      local lx, _, lz = model.joint(dummy, scratch, "thigh.L")
-      local rx, _, rz = model.joint(dummy, scratch, "thigh.R")
-      local fx, fz = -(lz - rz), lx - rx                  -- facing, from the body's left (+x in the T-pose faces +z)
-      local turn = yaw_turn(-math.atan(fx, fz))           -- turned to face +z: the player's end of the table
+      local left, right = joint("thigh.L", scratch), joint("thigh.R", scratch)
+      local fx, fz = -(left[3] - right[3]), left[1] - right[1]   -- facing, from the body's left (+x faces +z)
       model.pose(dummy, scratch, clip.name, math.min(CONTACT, clip.duration), 1)
-      local hx, hy, hz = rotate(turn, model.joint(dummy, scratch, "hand.R"))
-      moves[#moves + 1] = { clip = clip.name, side = side, kind = kind, turn = turn, hand = { hx, hy, hz } }
+      local blade = blade_in_model("R", scratch)
+      for _, mirrored in ipairs({ false, true }) do
+        local turn = yaw_turn(-math.atan(mirrored and -fx or fx, fz))   -- turned to face +z, the player's end
+        local b = mirrored and v(-blade[1], blade[2], blade[3]) or blade
+        moves[#moves + 1] = { clip = clip.name, kind = kind, side = side, mirrored = mirrored, turn = turn,
+                              hand = mirrored and "L" or "R", blade = rot(turn, b), used = 0 }
+      end
     end
-  end
-  hands = {}
-  for _, side in ipairs({ "L", "R" }) do
-    local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, "hand." .. side)
-    hands[#hands + 1] = { bone = "hand." .. side, node = "bat." .. side, offset = { -qx, -qy, -qz, qw } }
   end
   if moves[1] then
     body.move, body.turn = moves[1], moves[1].turn
@@ -73,22 +172,110 @@ local function learn_moves()
   end
 end
 
--- The shot for a ball arriving at x, height y: forehand on its right (-x, as it faces +z), backhand on its left.
--- Among those, the clip whose recorded hit is nearest that height (the body can slide sideways and forward, not up),
--- nudged toward the kind of shot that suits the height. A little randomness so it doesn't always play the same.
-local PREFER = { high = { "smash", "drive", "loop" }, low = { "push", "loop", "flick", "block", "drive" },
-                 mid = { "drive", "loop", "block", "flick", "push", "smash" } }
-local function choose(x, y)
-  local side = x < body.x and "fh" or "bh"
-  local height = y - TABLE_Y > 0.45 and "high" or y - TABLE_Y < 0.12 and "low" or "mid"
-  local best, best_cost = moves[1], math.huge
-  for _, m in ipairs(moves) do
-    local cost = math.abs(m.hand[2] - y) + (m.side == side and 0 or 0.5) + math.random() * 0.06
-    local rank = 0.3
-    for i, kind in ipairs(PREFER[height]) do if kind == m.kind then rank = (i - 1) * 0.04 end end
-    if cost + rank < best_cost then best, best_cost = m, cost + rank end
+-- The ball's flight from now on: the points where the opponent may hit it (after one bounce on its side,
+-- off the end of the table), with how long until it gets there.
+local function flight()
+  local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
+  local own, dt, out = bounces.cpu or 0, 1 / 120, {}
+  for step = 1, 300 do
+    vy = vy - G * dt
+    x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
+    if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
+      y, vy, vx, vz = TABLE_Y + R, -vy * BOUNCE, vx * 0.97, vz * 0.97
+      if z < 0 then own = own + 1 end
+    end
+    if y < R or own >= 2 then break end
+    if own == 1 and z < -HALF_L + 0.2 and step % 2 == 0 then out[#out + 1] = { x = x, y = y, z = z, t = step * dt } end
   end
-  return best
+  return out
+end
+
+-- Plans the return of the ball you just hit: which move, where to stand, when to start the swing.
+local function plan()
+  local points = flight()
+  local best, at, best_cost, best_sink = nil, nil, math.huge, 0
+  for _, m in ipairs(moves) do
+    for _, p in ipairs(points) do
+      local sx, sz = p.x - m.blade[1], p.z - m.blade[3]          -- where the body would stand
+      if sz < -HALF_L - 0.2 and p.t > 0.3 then                    -- behind the table, with time to swing
+        local run = math.sqrt((sx - body.x) ^ 2 + (sz - body.z) ^ 2)
+        local sink = math.max(-CROUCH, math.min(0, p.y - m.blade[2]))   -- crouch for a ball below the shot's height
+        local cost = math.abs(p.y - m.blade[2] - sink) * 3 - sink * 0.3 + run * 0.3 + m.used * 0.35 + math.random() * 0.05
+        if cost < best_cost then best, at, best_cost, best_sink = m, p, cost, sink end
+      end
+    end
+  end
+  if not best then return end
+  best.used = best.used + 1
+  local fade = best.mirrored == body.move.mirrored and 0.12 or 0   -- a mirrored pose can't blend with an unmirrored one
+  body.move, body.turn = best, best.turn
+  body.tx, body.tz, body.ty = at.x - best.blade[1], at.z - best.blade[3], best_sink
+  anim:play(best.clip, { loop = false, restart = true, fade = fade, time = math.max(0, CONTACT - at.t),
+                         speed = at.t > CONTACT and CONTACT / at.t or 1 })
+end
+
+-- Two-bone IK: thigh and shin turn so the ankle reaches target (inside the model); the foot keeps its turn.
+local function reach(leg, target)
+  local hip, thigh_turn = joint(leg.thigh)
+  local knee, shin_turn = joint(leg.shin)
+  local ankle, foot_turn = joint(leg.foot)
+  local _, hips_turn = joint("hips")
+  local a, b = len(sub(knee, hip)), len(sub(ankle, knee))
+  local to = sub(target, hip)
+  local d = math.min(math.max(len(to), math.abs(a - b) + 1e-3), a + b - 1e-3)
+  local dir = unit(to)
+  local bend = sub(sub(knee, hip), mul(dir, dot(sub(knee, hip), dir)))
+  if len(bend) < 1e-4 then bend = rot(hips_turn, v(0, 0, 1)) end
+  bend = unit(bend)
+  local c = math.max(-1, math.min(1, (a * a + d * d - b * b) / (2 * a * d)))
+  local new_knee = add(add(hip, mul(dir, a * c)), mul(bend, a * math.sqrt(1 - c * c)))
+  local new_ankle = add(hip, mul(dir, d))
+  local turn_thigh = from_to(sub(knee, hip), sub(new_knee, hip))
+  local new_thigh = qmul(turn_thigh, thigh_turn)
+  local new_shin = qmul(from_to(rot(turn_thigh, sub(ankle, knee)), sub(new_ankle, new_knee)), qmul(turn_thigh, shin_turn))
+  set_turn(leg.thigh, hips_turn, new_thigh, anim.animator)
+  set_turn(leg.shin, new_thigh, new_shin, anim.animator)
+  set_turn(leg.foot, new_shin, foot_turn, anim.animator)
+end
+
+-- Planted feet stay put while the body moves; one at a time, a foot left too far behind steps.
+local function feet(dt)
+  for i, leg in ipairs(legs) do
+    local wanted = to_world((joint(leg.foot)))
+    wanted[2] = wanted[2] - body.y            -- the animation's own ankle height off the ground: crouching bends the knees
+    local other = legs[3 - i]
+    leg.plant = leg.plant or wanted
+    local target
+    if wanted[2] - leg.rest > LIFTED then                         -- the animation's own step: follow it
+      leg.plant, leg.step, target = wanted, nil, wanted
+    else
+      if not leg.step and not other.step and
+         math.sqrt((wanted[1] - leg.plant[1]) ^ 2 + (wanted[3] - leg.plant[3]) ^ 2) > STEP_LENGTH then
+        leg.step = { from = leg.plant, to = v(wanted[1] + body.vx * 0.12, wanted[2], wanted[3] + body.vz * 0.12), t = 0 }
+      end
+      if leg.step then
+        leg.step.t = math.min(1, leg.step.t + dt / STEP_TIME)
+        local s = leg.step.t * leg.step.t * (3 - 2 * leg.step.t)
+        target = add(leg.step.from, mul(sub(leg.step.to, leg.step.from), s))
+        target[2] = wanted[2] + math.sin(math.pi * leg.step.t) * STEP_HEIGHT
+        if leg.step.t >= 1 then leg.plant, leg.step = leg.step.to, nil end
+      else
+        target = v(leg.plant[1], wanted[2], leg.plant[3])
+      end
+    end
+    reach(leg, to_model(target))
+  end
+end
+
+-- A little burst where bat and ball meet.
+local function spark(x, y, z) effects[#effects + 1] = { x = x, y = y, z = z, t = 0 } end
+
+-- The mannequin, each frame after the animation: mirror if the move is mirrored, feet, then where its bat is.
+local function pose_opponent(dt)
+  if #moves == 0 then return end
+  if body.move.mirrored then mirror_pose(anim.animator) end
+  feet(dt)
+  body.blade = to_world(blade_in_model(body.move.hand, anim.animator))
 end
 
 local function side_of(z) return z > 0 and "player" or "cpu" end
@@ -237,7 +424,10 @@ local function step_ball(dt)
   if state == "rally" then
     if last == "cpu" and bounces.player == 1 and pz < PADDLE_Z and ball.z >= PADDLE_Z then
       local dx, dy = ball.x - me.x, ball.y - me.y
-      if dx * dx + dy * dy <= REACH * REACH then ball.z = PADDLE_Z - 0.01 player_hit() end
+      if dx * dx + dy * dy <= REACH * REACH then ball.z = PADDLE_Z - 0.01 spark(ball.x, ball.y, ball.z) player_hit() end
+    elseif last == "player" and bounces.cpu == 1 and #moves > 0 then
+      -- The mannequin returns it only if its bat really touches it.
+      if len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE then spark(ball.x, ball.y, ball.z) cpu_hit() body.ty = 0 end
     elseif last == "player" and bounces.cpu == 1 and pz > AI_Z and ball.z <= AI_Z then
       local dx, dy = ball.x - cpu.x, ball.y - cpu.y
       if dx * dx + dy * dy <= AI_REACH * AI_REACH then ball.z = AI_Z + 0.01 cpu_hit() end
@@ -266,19 +456,15 @@ function fixed_update(dt)
   elseif state == "serve" and server == "cpu" then
     gx, gy = 0.2, TABLE_Y + 0.22
   end
-  -- The mannequin: once a ball is on its way, commit to a shot timed and placed to meet it.
-  if state == "rally" and last == "player" and ball.vz < 0 and ball.z < 0 and body.ball_seen ~= bounces and #moves > 0 then
-    local bx, by, t = predict(AI_Z)
-    if bx then
-      body.ball_seen = bounces   -- one decision per incoming ball
-      local m = choose(bx, by)
-      body.move, body.turn = m, m.turn
-      body.tx, body.tz = bx - m.hand[1], AI_Z - m.hand[3]
-      anim.layers = {}
-      anim:play(m.clip, { loop = false, fade = 0, time = math.max(0, CONTACT - t) })
-    end
+  -- The mannequin: as soon as you hit, it plans the return and heads for its spot.
+  if state == "rally" and last == "player" and body.plan_for ~= bounces and #moves > 0 then
+    body.plan_for = bounces   -- one plan per ball you hit
+    plan()
   end
-  body.x, body.z = lib.approach(body.x, body.tx, 6, dt), lib.approach(body.z, body.tz, 6, dt)
+  local nx, nz = lib.approach(body.x, body.tx, WALK, dt), lib.approach(body.z, body.tz, WALK, dt)
+  body.vx, body.vz = (nx - body.x) / dt, (nz - body.z) / dt
+  body.x, body.z = nx, nz
+  body.y = lib.approach(body.y, body.ty, WALK, dt)
 
   local dx, dy = gx - cpu.x, gy - cpu.y
   local far = math.sqrt(dx * dx + dy * dy)
@@ -291,6 +477,9 @@ function fixed_update(dt)
     local p, toward = server == "player" and me or cpu, server == "player" and -1 or 1
     ball.x, ball.y = p.x + 0.04, p.y + 0.14 + math.sin(sys.real_time() * 4) * 0.02
     ball.z = (server == "player" and PADDLE_Z or AI_Z) + toward * 0.06
+    if server == "cpu" and #moves > 0 then   -- in front of the mannequin's bat
+      ball.x, ball.y, ball.z = body.blade[1], body.blade[2] + 0.08, body.blade[3] + 0.12
+    end
   else
     for _ = 1, 2 do step_ball(dt / 2) end                -- half steps, so a fast ball can't skip the net
   end
@@ -299,6 +488,11 @@ end
 function update(dt)
   lib.update(dt)
   anim:update(dt)
+  pose_opponent(dt)
+  for i = #effects, 1, -1 do
+    effects[i].t = effects[i].t + dt
+    if effects[i].t > 0.3 then table.remove(effects, i) end
+  end
   camera()   -- so gfx.unproject below uses this camera
 
   -- Pointing: hold the mouse button (or a finger) and move. The paddle follows the point on its plane.
@@ -375,12 +569,11 @@ function draw()
   gfx.blend("opaque")
   if #moves > 0 then
     local q = body.turn
-    model.draw(dummy, body.x, 0, body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, anim.animator)
-    for _, hand in ipairs(hands) do
-      local x, y, z, qx, qy, qz, qw = model.joint(dummy, anim.animator, hand.bone)
-      local wx, wy, wz = rotate(q, x, y, z)
-      local t = qmul(qmul(q, { qx, qy, qz, qw }), hand.offset)
-      model.draw(bat_model, body.x + wx, wy, body.z + wz, t[1], t[2], t[3], t[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
+    model.draw(dummy, body.x, body.y, body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, anim.animator)
+    for _, hand in pairs(hands) do
+      local wrist, turn = joint(hand.bone)
+      local at, t = to_world(wrist), qmul(qmul(q, turn), hand.offset)
+      model.draw(bat_model, at[1], at[2], at[3], t[1], t[2], t[3], t[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
     end
   end
   gfx.blend("alpha")
@@ -389,10 +582,24 @@ function draw()
   paddle(me.x, me.y, PADDLE_Z, 1.0, 0.25, 0.3, 0.8)
   gfx.blend("opaque")
 
-  -- Ball and a fading trail of smaller balls behind it.
+  -- The ball: a real lit ball, its shadow straight below it on the table or the floor (always, so you can read
+  -- where it is), the bursts where bat meets ball, and a fading trail.
+  gfx.sphere(ball.x, ball.y, ball.z, R * 2, 1.0, 0.93, 0.8)
+  local over = math.abs(ball.x) <= HALF_W and math.abs(ball.z) <= HALF_L and ball.y >= TABLE_Y
+  local floor = over and TABLE_Y + 0.003 or 0.003
+  local size = R * 3.2 / (1 + (ball.y - floor) * 0.4)
   gfx.unlit(true)
-  gfx.sphere(ball.x, ball.y, ball.z, R * 2, 1.0, 0.95, 0.85)
   gfx.blend("alpha")
+  gfx.draw(gfx.SPHERE, ball.x, floor, ball.z, 0, 0, 0, 1, size, 0.002, size, 0, 0, 0, 0.75)
+  for _, e in ipairs(effects) do
+    local age = e.t / 0.3
+    local ring = 0.04 + 0.22 * age
+    for k = 0, 11 do
+      local a = k / 12 * math.pi * 2
+      gfx.sphere(e.x + math.cos(a) * ring, e.y + math.sin(a) * ring, e.z, 0.024 * (1 - age), 1, 0.9, 0.5, 1 - age)
+    end
+    gfx.sphere(e.x, e.y, e.z, 0.16 * (1 - age), 1, 1, 0.85, 0.7 * (1 - age))
+  end
   for i, p in ipairs(trail) do
     if i > 1 then
       local fade = 1 - i / (#trail + 1)
