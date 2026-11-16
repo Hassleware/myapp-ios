@@ -26,7 +26,11 @@ local PLANT_HEIGHT = 0.035  -- metres above the ground at which the animation's 
 local PLANT_SPEED = 0.35    -- metres a second: a heel or toe moving faster than this is in a step
 local EASE = 14             -- how quickly a heel or toe settles onto or lifts off the ground (bigger is snappier)
 local RELEASE = 0.25        -- a planted point this far from the animation's lets go, so the body isn't held back
-local GRAVITY = 9.8         -- metres a second squared
+local SLIDE = 2.0           -- a planted heel or toe slides after the animation's this much a second (0 = glued)
+local SPRING_HZ = 4.0       -- suspension: the body rides on the legs like a car on springs, bouncing this fast
+local SPRING_DAMP = 0.6     -- and settling this quickly (1 = no bounce at all)
+local MAX_FOOT_FIX = math.rad(45)   -- the most the IK may turn a foot away from the animation's
+local JOINT_EASE = 18       -- the IK's foot turn and knee direction ease at this rate instead of snapping
 local HEEL_BACK, TOES_FRONT = 0.045, 0.13   -- the contact points: heel, and the ball the foot pivots on (metres)
 local SOLE_BACK, SOLE_FRONT, SOLE_HALF = 0.049, 0.186, 0.046   -- the sole's real corners (measured from the model),
                                                                -- which are never let through the ground
@@ -39,7 +43,6 @@ local STEP = { x = 0.32, y = 0.04, z = 0.05, sx = 0.42, sy = 0.08, sz = 0.8 }
 local legs = {}
 local hips_parent
 local fall = { offset = 0, speed = 0 }   -- gravity: how far the body has dropped, and how fast it is falling
-local hips_drop = 0
 
 -- ---------------------------------------------------------------- small vector and rotation helpers
 
@@ -74,6 +77,21 @@ local function partly(q, w)
   local p = { q[1] * w, q[2] * w, q[3] * w, 1 + (q[4] - 1) * w }
   local l = math.sqrt(p[1] ^ 2 + p[2] ^ 2 + p[3] ^ 2 + p[4] ^ 2)
   return { p[1] / l, p[2] / l, p[3] / l, p[4] / l }
+end
+
+-- At most max_angle of a turn (the short way round).
+local function limit(q, max_angle)
+  if q[4] < 0 then q = { -q[1], -q[2], -q[3], -q[4] } end
+  local angle = 2 * math.acos(math.min(1, q[4]))
+  return angle > max_angle and partly(q, max_angle / angle) or q
+end
+
+-- From turn a part of the way to turn b (the short way round).
+local function toward(a, b, t)
+  if a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4] < 0 then b = { -b[1], -b[2], -b[3], -b[4] } end
+  local q = { lib.lerp(a[1], b[1], t), lib.lerp(a[2], b[2], t), lib.lerp(a[3], b[3], t), lib.lerp(a[4], b[4], t) }
+  local l = math.sqrt(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2)
+  return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
 end
 
 -- A bone's place and turn in the model, as the engine has it right now.
@@ -122,6 +140,10 @@ local function contact(point, at, dt, hold, forced)
   local down = forced or (math.min(at[2] - ground, at[2] - fall.offset) < PLANT_HEIGHT and speed < PLANT_SPEED)
   if down and not point.lock then point.lock = v(at[1], 0, at[3]) end
   if first and down then point.weight = 1 end   -- the first frame starts planted, not easing down from the air
+  if point.lock then   -- planted, but sliding a little after the animation
+    local k = 1 - math.exp(-SLIDE * dt)
+    point.lock[1], point.lock[3] = lib.lerp(point.lock[1], at[1], k), lib.lerp(point.lock[3], at[3], k)
+  end
   local drifted = point.lock and len(v(at[1] - point.lock[1], 0, at[3] - point.lock[3])) > RELEASE
   if drifted or (not down and not hold) then point.lock = nil end
   point.weight = lib.approach(point.weight, point.lock and 1 or 0, EASE, dt)
@@ -168,8 +190,8 @@ end
 
 -- ---------------------------------------------------------------- gravity, then the feet
 
-local function fall_to_ground(dt)
-  -- How high the lowest heel or toe is above the ground under it, with the animation as it is.
+local function suspension(dt)
+  -- Where the body would rest: its lowest sole corner on the ground under it, with the animation as it is...
   local lowest = math.huge
   for _, leg in ipairs(legs) do
     local ankle, turn = joint(leg.foot)
@@ -178,19 +200,25 @@ local function fall_to_ground(dt)
       lowest = math.min(lowest, p[2] - ground_below(p))
     end
   end
-  if not fall.started then fall.started, fall.offset = true, -lowest end   -- starts standing, not dropping in
-  -- Falls while the lowest foot is above the ground; lands on it; never lets it sink in.
-  fall.speed = fall.speed - GRAVITY * dt
-  fall.offset = fall.offset + fall.speed * dt
-  if fall.offset + lowest <= 0 then
-    fall.offset, fall.speed = -lowest, 0
+  -- ...and lower still if a planted foot couldn't reach (fall.short, measured by the legs last frame).
+  fall.base = -lowest
+  local rest = fall.base - fall.short
+  if not fall.started then fall.started, fall.offset = true, rest end   -- starts standing, not dropping in
+  -- The body doesn't jump there: it is pulled by a spring and slowed by a damper, like a car on its suspension.
+  -- The legs bend and stretch underneath (the IK), so the feet stay on the ground while the body rides.
+  local w = 2 * math.pi * SPRING_HZ
+  local steps = math.ceil(dt * 240)
+  for _ = 1, steps do
+    local h = dt / steps
+    fall.speed = fall.speed + (w * w * (rest - fall.offset) - 2 * SPRING_DAMP * w * fall.speed) * h
+    fall.offset = fall.offset + fall.speed * h
   end
   lift_body(fall.offset)
 end
 
 local function solve_feet(dt)
   -- Where each foot should be: its heel and toes, then the ankle that puts them there.
-  local drop_needed = 0
+  local drop_needed = -math.huge   -- how far the body must come down for the furthest foot to reach (below 0: slack)
   for _, leg in ipairs(legs) do
     local ankle, turn, heel, toes = sole_points(leg)
     local heel_t = contact(leg.heel, heel, dt)
@@ -199,7 +227,8 @@ local function solve_feet(dt)
     -- One way: a heel on the ground always has its toes down too. Toes down with the heel up is fine.
     local toes_t = contact(leg.toes, toes, dt, leg.toes.lock ~= nil and not heel_up, leg.heel.lock ~= nil)
     -- Turn the foot so heel-to-toes runs where the targets do: this is the pivot on the toes or heel.
-    local foot = qmul(from_to(sub(toes, heel), sub(toes_t, heel_t)), turn)
+    -- Capped, so heel and toe targets that have slid past each other can never spin the foot round.
+    local foot = qmul(limit(from_to(sub(toes, heel), sub(toes_t, heel_t)), MAX_FOOT_FIX), turn)
     -- With both down, level it side to side onto the ground.
     local both = math.min(leg.heel.weight, leg.toes.weight)
     if both > 0 then
@@ -209,10 +238,12 @@ local function solve_feet(dt)
       local up_flat = sub(up, mul(along, dot(up, along)))
       local normal_flat = sub(normal, mul(along, dot(normal, along)))
       if len(up_flat) > 1e-4 and len(normal_flat) > 1e-4 then
-        foot = qmul(partly(from_to(up_flat, normal_flat), both), foot)
+        foot = qmul(limit(partly(from_to(up_flat, normal_flat), both), MAX_FOOT_FIX), foot)
       end
     end
-    leg.turn = foot
+    -- Suspension for the ankle: the foot's turn eases toward this instead of snapping to it.
+    leg.turn = leg.turn and toward(leg.turn, foot, 1 - math.exp(-JOINT_EASE * dt)) or foot
+    foot = leg.turn
     leg.target = sub(heel_t, rotate(foot, leg.heel_local))   -- the ankle, from the heel
     -- Whatever the heel and ball do, no corner of the sole goes through the ground: lift the foot if one would.
     local lift = 0
@@ -226,10 +257,15 @@ local function solve_feet(dt)
     drop_needed = math.max(drop_needed, len(sub(leg.target, hip)) - reach)
   end
 
-  -- The first frame starts with the hips already where they need to be, so no leg floats in at the start.
-  hips_drop = fall.solved and lib.approach(hips_drop, drop_needed, EASE, dt) or drop_needed
-  fall.solved = true
-  if hips_drop > 1e-4 then lift_body(-hips_drop) end
+  -- How much lower than its resting height the body must ride for every foot to reach: the suspension's target
+  -- next frame. On the very first frame the body goes there at once, so no leg floats in at the start.
+  local short = math.max(0, fall.base - (fall.offset - drop_needed))
+  if not fall.solved then
+    fall.solved = true
+    if drop_needed > 0 then fall.offset = fall.offset - drop_needed lift_body(-drop_needed) end
+    fall.short = short
+  end
+  fall.short = lib.approach(fall.short, short, EASE, dt)
 
   -- Two-bone IK for each leg.
   local _, hips_turn = joint("hips")
@@ -241,9 +277,14 @@ local function solve_feet(dt)
     local to_target = sub(leg.target, hip)
     local d = math.min(math.max(len(to_target), math.abs(a - b) + 1e-3), a + b - 1e-3)
     local dir = unit(to_target)
-    local bend = sub(sub(knee, hip), mul(dir, dot(sub(knee, hip), dir)))   -- keep the knee's own bend direction
-    if len(bend) < 1e-5 then bend = rotate(hips_turn, v(0, 0, 1)) end
+    -- Which way the knee points: the animation's knee, steadied by the way the toes point (a nearly straight leg's
+    -- own bend direction is tiny and can flip), then eased so the knee never jumps.
+    local function across(p) return sub(p, mul(dir, dot(p, dir))) end
+    local bend = add(across(sub(knee, hip)), mul(unit(across(rotate(leg.turn, leg.toe_dir))), 0.04))
+    if len(bend) < 1e-5 then bend = across(rotate(hips_turn, v(0, 0, 1))) end
     bend = unit(bend)
+    if leg.bend then bend = unit(across(add(leg.bend, mul(sub(bend, leg.bend), 1 - math.exp(-JOINT_EASE * dt))))) end
+    leg.bend = bend
     local cos_hip = math.max(-1, math.min(1, (a * a + d * d - b * b) / (2 * a * d)))
     local new_knee = add(add(hip, mul(dir, a * cos_hip)), mul(bend, a * math.sqrt(1 - cos_hip * cos_hip)))
     local new_ankle = add(hip, mul(dir, d))
@@ -277,6 +318,7 @@ function init()
     leg.heel_local = rotate(back, v(0, -y, -HEEL_BACK))
     leg.toes_local = rotate(back, v(0, -y, TOES_FRONT))
     leg.sole_up = rotate(back, v(0, 1, 0))
+    leg.toe_dir = rotate(back, v(0, 0, 1))
     leg.corners = {}
     for _, z in ipairs({ -SOLE_BACK, TOES_FRONT, SOLE_FRONT }) do
       for _, x in ipairs({ -SOLE_HALF, SOLE_HALF }) do leg.corners[#leg.corners + 1] = rotate(back, v(x, -y, z)) end
@@ -293,7 +335,7 @@ function init()
     local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, "hand." .. side)
     hands[#hands + 1] = { bone = "hand." .. side, node = "bat." .. side, offset = qinv({ qx, qy, qz, qw }) }
   end
-  fall.offset, fall.speed, fall.started, fall.solved, hips_drop = 0, 0, false, false, 0
+  fall.offset, fall.speed, fall.started, fall.solved, fall.short = 0, 0, false, false, 0
   springs = {}
   play(1)
 end
@@ -302,7 +344,7 @@ function update(dt)
   anim:update(dt)
   if ik_on and dt > 0 then
     bounce(dt)
-    fall_to_ground(dt)
+    suspension(dt)
     solve_feet(dt)
   end
   for _, t in ipairs(input.touches()) do
@@ -340,6 +382,6 @@ function draw()
   local left, top = gfx.safe()
   local name = clips[1] and clips[1].name or "no clips in mannequin.glb"
   gfx.text("MANNEQUIN  -  " .. name, left + 80, top + 24, 26, 1, 1, 1)
-  gfx.text("SMOOTHING + GRAVITY + FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
+  gfx.text("SMOOTHING + SUSPENSION + FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
            ik_on and 0.5 or 0.9, ik_on and 1.0 or 0.6, ik_on and 0.6 or 0.5)
 end
