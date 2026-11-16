@@ -6,18 +6,21 @@
 -- Shots: while recording it beeps for one table tennis shot after another: two ticks, then a high beep to hit on,
 -- every PERIOD seconds. Play a different shot on each high beep and stop whenever. Takes are named shots-1,
 -- shots-2...; the PC cuts them into one clip per shot and guesses which shot each is (tools/split_shots.py).
+-- Hands free: raise both hands over your head and hold them there for a second to start, and again to stop.
 
 local lib = include("lib.lua")
 local FIRST_HIT, PERIOD = 4.0, 4.0   -- keep the same as tools/split_shots.py
 local sounds = { tick = audio.load("tick.wav"), hit = audio.load("hit.wav"), done = audio.load("end.wav") }
 local next_beep = 0
+local HANDS_UP = 0.8        -- metres above the hips that both hands must be, held for HOLD seconds, to start or stop
+local HOLD = 1.0
+local held, latched = 0, false
 
 local started, why_not = false, nil
 local state = "idle"          -- idle, countdown, recording, sending, processing
 local countdown, record_start = 0, 0
 local status = ""
 local takes = math.floor(save.get("takes", 0))
-local hands = save.get("hands", "false") == "true"   -- saved as text. HANDS: the PC's slower pass with finer fingers
 local pose, parents, tracked = {}, {}, false
 local result, showing_result, result_start = nil, false, 0   -- the PC's result: { fps, parents, frames }
 local buttons
@@ -93,7 +96,7 @@ local function send()
     end
     if not video then state, status = "idle", "No video for this take, so only the ARKit .bvh is saved." return end
     status = string.format("Sending the video (%.1f MB)...", #video / 1e6)
-    net.backend({ path = "/video?name=" .. name .. (hands and "&hands=1" or ""), method = "POST", body = video, timeout = 120 }, function(code, body, err)
+    net.backend({ path = "/video?name=" .. name, method = "POST", body = video, timeout = 120 }, function(code, body, err)
       if err or code ~= 202 then state, status = "idle", "Video FAILED: " .. tostring(err or body) return end
       state, status = "processing", "Video received. SAM 3D Body is starting on the PC..."
       watch(name)
@@ -116,11 +119,6 @@ buttons = {
   { label = function() return "SEND" end, run = function() if state == "idle" then send() end end },
   { label = function() return showing_result and "LIVE" or "REPLAY" end, run = function()
       if result then showing_result, result_start = not showing_result, sys.real_time() end
-    end },
-  { label = function() return hands and "HANDS ON" or "HANDS OFF" end, run = function()
-      hands = not hands
-      save.set("hands", tostring(hands))
-      status = hands and "Finer fingers on the PC: about 4x slower." or "Fast: hands come from the body pass."
     end },
 }
 
@@ -147,7 +145,31 @@ function update(dt)
   local err
   tracked, pose, parents, err = mocap.pose()
   if err then status = "Camera problem: " .. err end
-  if started and state == "idle" and status == "Looking for a body..." and tracked then status = "Tracking. Tap RECORD." end
+  if started and state == "idle" and status == "Looking for a body..." and tracked then
+    status = "Tracking. Raise both hands over your head for a second to start (or tap RECORD)."
+  end
+
+  -- Hands free: two joints high over the hips and apart from each other (one in each hand) for HOLD seconds
+  -- presses RECORD or STOP. It has to be let go before it can fire again.
+  local high = {}
+  if tracked then
+    for i = 1, #pose - 2, 3 do
+      if pose[i + 1] > HANDS_UP then high[#high + 1] = i end
+    end
+  end
+  local both = false
+  for a = 1, #high do
+    for b = a + 1, #high do
+      local i, j = high[a], high[b]
+      if (pose[i] - pose[j]) ^ 2 + (pose[i + 2] - pose[j + 2]) ^ 2 > 0.25 ^ 2 then both = true end
+    end
+  end
+  held = both and held + dt or 0
+  if not both then latched = false end
+  if held >= HOLD and not latched and (state == "idle" or state == "recording") then
+    latched = true
+    buttons[1].run()
+  end
 
   if state == "countdown" then
     local before = math.ceil(countdown)
