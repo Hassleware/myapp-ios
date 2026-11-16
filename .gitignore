@@ -8,3 +8,4 @@ tools/.ipa/
 *.pdf
 backends/*/data.db
 captures/
+*.blend1

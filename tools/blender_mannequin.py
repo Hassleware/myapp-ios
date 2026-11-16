@@ -356,7 +356,10 @@ def retarget(armature, npz_path, name=None):
         correction[bone] = Matrix(rot[0, joint[follow]].tolist()).transposed() @ first
 
     bpy.context.scene.render.fps = round(fps)
-    action = bpy.data.actions.new(name or Path(npz_path).stem.replace("-sam3d", ""))
+    name = name or Path(npz_path).stem.replace("-sam3d", "")
+    for old in [a for a in bpy.data.actions if a.name == name or a.name.startswith(name + ".")]:
+        bpy.data.actions.remove(old)   # an earlier copy of this take, saved in the .blend
+    action = bpy.data.actions.new(name)
     armature.animation_data_create()
     armature.animation_data.action = action
     order = list(BONES)   # parents come before children in BONES
