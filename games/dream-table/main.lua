@@ -21,7 +21,25 @@ local me = { x = 0, y = TABLE_Y + 0.25, vx = 0, vy = 0, tx = 0, ty = TABLE_Y + 0
 local cpu = { x = 0, y = TABLE_Y + 0.25 }
 local score = { player = 0, cpu = 0 }
 local wins = save.get("wins", 0)
-local trail = {}
+local trail = {}                      -- where the ball was, newest first, one every TRAIL_STEP seconds
+local TRAIL_STEP, TRAIL_WIDTH = 1 / 30, 0.05
+local trail_clock = 0
+
+-- The trail's ribbon: a fixed strip that shaders/trail.slang bends along the ball's last positions each frame.
+local trail_mesh
+do
+  local numbers, indices, SEGMENTS = {}, {}, 40
+  for i = 0, SEGMENTS do
+    for _, side in ipairs({ -1, 1 }) do
+      for _, n in ipairs({ 0, 0, 0, 0, 1, 0, i / SEGMENTS, side }) do numbers[#numbers + 1] = n end   -- p, n, uv
+    end
+    if i < SEGMENTS then
+      local a = i * 2 + 1
+      for _, n in ipairs({ a, a + 1, a + 2, a + 2, a + 1, a + 3 }) do indices[#indices + 1] = n end
+    end
+  end
+  trail_mesh = gfx.new_mesh(numbers, indices, "pnu")
+end
 
 -- state: "serve" (someone holds the ball), "rally", "point" (a short pause), "over"
 local state, server, last, bounces = "serve", "player", nil, {}
@@ -601,9 +619,14 @@ function update(dt)
     new_game()
   end
 
-  -- A fading trail behind the ball.
-  table.insert(trail, 1, { ball.x, ball.y, ball.z })
-  if #trail > 14 then table.remove(trail) end
+  -- The trail: the ball's position every TRAIL_STEP seconds (none while it is held for a serve).
+  trail_clock = trail_clock + dt
+  if state == "serve" then trail = {} end
+  if trail_clock >= TRAIL_STEP or #trail == 0 then
+    trail_clock = 0
+    table.insert(trail, 1, { ball.x, ball.y, ball.z })
+    if #trail > 5 then table.remove(trail) end
+  end
 end
 
 -- ---------------------------------------------------------------- drawing
@@ -674,14 +697,25 @@ function draw()
     end
     gfx.sphere(e.x, e.y, e.z, 0.16 * (1 - age), 1, 1, 0.85, 0.7 * (1 - age))
   end
-  for i, p in ipairs(trail) do
-    if i > 1 then
-      local fade = 1 - i / (#trail + 1)
-      gfx.sphere(p[1], p[2], p[3], R * 2 * fade, 1.0, 0.5 + 0.3 * fade, 0.8, 0.45 * fade)
-    end
-  end
   gfx.blend("opaque")
   gfx.unlit(false)
+
+  -- The trail: six points (the ball now, then its last five places) for shaders/trail.slang to draw a smooth
+  -- glowing ribbon through.
+  local points = { { ball.x, ball.y, ball.z } }
+  for i = 1, 5 do points[i + 1] = trail[i] or points[i] end
+  for i = 1, 4 do gfx.frame_param(i, points[i][1], points[i][2], points[i][3], TRAIL_WIDTH) end
+  gfx.param(1, points[5][1], points[5][2], points[5][3], 0)
+  gfx.param(2, points[6][1], points[6][2], points[6][3], 0)
+  gfx.shader("trail")
+  gfx.blend("add")
+  gfx.cull(false)
+  gfx.depth(true, false)
+  gfx.draw(trail_mesh, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1.0, 0.55, 0.8, 0.9)
+  gfx.depth(true, true)
+  gfx.cull(true)
+  gfx.blend("opaque")
+  gfx.shader()
 
   -- Score and messages.
   local w, h = gfx.size()
