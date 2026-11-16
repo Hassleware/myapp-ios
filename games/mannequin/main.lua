@@ -27,7 +27,9 @@ local PLANT_SPEED = 0.35    -- metres a second: a heel or toe moving faster than
 local EASE = 14             -- how quickly a heel or toe settles onto or lifts off the ground (bigger is snappier)
 local RELEASE = 0.25        -- a planted point this far from the animation's lets go, so the body isn't held back
 local GRAVITY = 9.8         -- metres a second squared
-local HEEL_BACK, TOES_FRONT = 0.045, 0.16   -- the sole's contact points, behind and ahead of the ankle (metres)
+local HEEL_BACK, TOES_FRONT = 0.045, 0.13   -- the contact points: heel, and the ball the foot pivots on (metres)
+local SOLE_BACK, SOLE_FRONT, SOLE_HALF = 0.049, 0.186, 0.046   -- the sole's real corners (measured from the model),
+                                                               -- which are never let through the ground
 local HEEL_UP = 0.06        -- the toes stay planted until the heel has risen this far: heel first, toes last
 
 -- The collision world the feet stand on: the floor and a low wooden step.
@@ -110,10 +112,14 @@ end
 
 local function contact(point, at, dt, hold)
   local ground, normal = ground_below(at)
+  local first = point.last == nil
   local speed = point.last and len(sub(at, point.last)) / math.max(dt, 1e-4) or 0
   point.last = at
-  local down = at[2] - ground < PLANT_HEIGHT and speed < PLANT_SPEED
+  -- Down if low over the ground under it, or low over the animation's own floor (the other foot may be up on the
+  -- step, which lifted the body): then the leg reaches down to the real ground and the hips drop to let it.
+  local down = math.min(at[2] - ground, at[2] - fall.offset) < PLANT_HEIGHT and speed < PLANT_SPEED
   if down and not point.lock then point.lock = v(at[1], 0, at[3]) end
+  if first and down then point.weight = 1 end   -- the first frame starts planted, not easing down from the air
   local drifted = point.lock and len(v(at[1] - point.lock[1], 0, at[3] - point.lock[3])) > RELEASE
   if drifted or (not down and not hold) then point.lock = nil end
   point.weight = lib.approach(point.weight, point.lock and 1 or 0, EASE, dt)
@@ -133,9 +139,13 @@ local function fall_to_ground(dt)
   -- How high the lowest heel or toe is above the ground under it, with the animation as it is.
   local lowest = math.huge
   for _, leg in ipairs(legs) do
-    local _, _, heel, toes = sole_points(leg)
-    lowest = math.min(lowest, heel[2] - ground_below(heel), toes[2] - ground_below(toes))
+    local ankle, turn = joint(leg.foot)
+    for _, corner in ipairs(leg.corners) do
+      local p = add(ankle, rotate(turn, corner))
+      lowest = math.min(lowest, p[2] - ground_below(p))
+    end
   end
+  if not fall.started then fall.started, fall.offset = true, -lowest end   -- starts standing, not dropping in
   -- Falls while the lowest foot is above the ground; lands on it; never lets it sink in.
   fall.speed = fall.speed - GRAVITY * dt
   fall.offset = fall.offset + fall.speed * dt
@@ -170,12 +180,21 @@ local function solve_feet(dt)
     end
     leg.turn = foot
     leg.target = sub(heel_t, rotate(foot, leg.heel_local))   -- the ankle, from the heel
+    -- Whatever the heel and ball do, no corner of the sole goes through the ground: lift the foot if one would.
+    local lift = 0
+    for _, corner in ipairs(leg.corners) do
+      local p = add(leg.target, rotate(foot, corner))
+      lift = math.max(lift, ground_below(p) - p[2])
+    end
+    leg.target[2] = leg.target[2] + lift
     local hip, knee = joint(leg.thigh), joint(leg.shin)
     local reach = (len(sub(knee, hip)) + len(sub(ankle, knee))) * 0.995
     drop_needed = math.max(drop_needed, len(sub(leg.target, hip)) - reach)
   end
 
-  hips_drop = lib.approach(hips_drop, drop_needed, EASE, dt)
+  -- The first frame starts with the hips already where they need to be, so no leg floats in at the start.
+  hips_drop = fall.solved and lib.approach(hips_drop, drop_needed, EASE, dt) or drop_needed
+  fall.solved = true
   if hips_drop > 1e-4 then lift_body(-hips_drop) end
 
   -- Two-bone IK for each leg.
@@ -224,6 +243,10 @@ function init()
     leg.heel_local = rotate(back, v(0, -y, -HEEL_BACK))
     leg.toes_local = rotate(back, v(0, -y, TOES_FRONT))
     leg.sole_up = rotate(back, v(0, 1, 0))
+    leg.corners = {}
+    for _, z in ipairs({ -SOLE_BACK, TOES_FRONT, SOLE_FRONT }) do
+      for _, x in ipairs({ -SOLE_HALF, SOLE_HALF }) do leg.corners[#leg.corners + 1] = rotate(back, v(x, -y, z)) end
+    end
     legs[#legs + 1] = leg
   end
   for _, n in ipairs(model.nodes(dummy)) do
@@ -237,7 +260,7 @@ function init()
     local facing = side == "L" and { 0, 0, 0, 1 } or { 0, 1, 0, 0 }
     hands[#hands + 1] = { bone = "hand." .. side, offset = qmul(qinv({ qx, qy, qz, qw }), facing) }
   end
-  fall.offset, fall.speed, hips_drop = 0, 0, 0
+  fall.offset, fall.speed, fall.started, fall.solved, hips_drop = 0, 0, false, false, 0
   play(1)
 end
 
