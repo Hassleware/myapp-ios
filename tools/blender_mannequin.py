@@ -340,14 +340,17 @@ def retarget(armature, npz_path, name=None):
     pos = positions @ A.T                                     # (F, J, 3) in Blender's axes
     rot = np.einsum("ab,fjbc,dc->fjad", A, rotations, A)      # A R A^T
 
-    # Root height: the mannequin's hips stand at 1.00 m; scale the take's travel to match.
+    # Bone lengths and hip height come from the armature itself, so a remodelled mannequin with other
+    # proportions still fits. The take's travel is scaled to the mannequin's hip height.
     root = joint["root"]
-    scale = 1.0 / max(float(pos[0, root, 2]), 0.3)
+    hip_height = armature.data.bones["hips"].head_local.z
+    scale = hip_height / max(float(pos[0, root, 2]), 0.3)
 
     rest = {b.name: b.matrix_local.to_3x3() for b in armature.data.bones}
     correction = {}
     for bone, (head, tail, _, follow, (a, b)) in BONES.items():
-        rest_dir = (Vector(tail) - Vector(head)).normalized()
+        data = armature.data.bones[bone]
+        rest_dir = (data.tail_local - data.head_local).normalized()
         take_dir = Vector(pos[0, joint[b]] - pos[0, joint[a]]).normalized()
         first = rest_dir.rotation_difference(take_dir).to_matrix() @ rest[bone]   # the bone turned to match frame 1
         correction[bone] = Matrix(rot[0, joint[follow]].tolist()).transposed() @ first
@@ -376,7 +379,7 @@ def retarget(armature, npz_path, name=None):
             pose.keyframe_insert("rotation_quaternion", frame=f + 1)
             if not parent:
                 travel = Vector(pos[f, root] - pos[0, root]) * scale
-                travel.z = (pos[f, root, 2] * scale) - 1.0
+                travel.z = (pos[f, root, 2] * scale) - hip_height
                 pose.location = rest[bone].transposed() @ travel
                 pose.keyframe_insert("location", frame=f + 1)
     bpy.context.scene.frame_start, bpy.context.scene.frame_end = 1, frames
@@ -384,14 +387,42 @@ def retarget(armature, npz_path, name=None):
     return action
 
 
+def find_repo():
+    here = next((Path(bpy.path.abspath(t.filepath)) for t in bpy.data.texts if t.filepath.endswith("blender_mannequin.py")),
+                Path(globals().get("__file__", "tools/blender_mannequin.py")))
+    return here.resolve().parent.parent
+
+
 if __name__ == "__main__":
+    # The mannequin to use, first match wins:
+    #   1. a 'mannequin' armature already in the open Blender file (you are remodelling it right now);
+    #   2. assets/mannequin/mannequin.blend (your saved remodel);
+    #   3. the one this script builds.
+    # Remodel freely, but keep the armature named 'mannequin', its bone names, the T-pose, and every part
+    # weighted to the bone that moves it. Bones may be moved and resized: retargeting reads them from the file.
+    #   blender --background --python tools/blender_mannequin.py -- --save-model    writes the built one to (2)
     args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    armature = build()
+    repo = find_repo()
+    model = repo / "assets" / "mannequin" / "mannequin.blend"
+    if args[:1] == ["--save-model"]:
+        build()
+        model.parent.mkdir(parents=True, exist_ok=True)
+        bpy.ops.wm.save_as_mainfile(filepath=str(model))
+        print("saved", model)
+        sys.exit(0)
+    existing = bpy.data.objects.get("mannequin")
+    if existing and existing.type == "ARMATURE":
+        armature = existing
+        print("using the mannequin in the open file")
+    elif model.exists():
+        bpy.ops.wm.open_mainfile(filepath=str(model))
+        armature = bpy.data.objects["mannequin"]
+        print("using", model)
+    else:
+        armature = build()
     take = args[0] if args else None
     if take is None:
-        here = next((Path(bpy.path.abspath(t.filepath)) for t in bpy.data.texts if t.filepath.endswith("blender_mannequin.py")),
-                    Path(globals().get("__file__", "tools/blender_mannequin.py")))
-        found = [p for p in (here.resolve().parent.parent / "captures").glob("*-sam3d.npz") if not p.name.startswith("zz-")]
+        found = [p for p in (repo / "captures").glob("*-sam3d.npz") if not p.name.startswith("zz-")]
         take = str(max(found, key=lambda p: p.stat().st_mtime)) if found else "-"
     if take != "-":
         retarget(armature, take)
