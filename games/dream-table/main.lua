@@ -446,8 +446,19 @@ local function words(s)
   end))
 end
 
+-- The camera: behind and above you (portrait, game.cfg), following your mannequin by less than it moves.
+-- Walk left or right and it pans that way by CAM_SIDE of the distance; walk back from the table and it pulls back
+-- and up (zooms out), walk in and it comes in and down (zooms in). It glides after you rather than jumping.
+local CAM_SIDE, CAM_BACK, CAM_UP = 0.5, 0.8, 0.6
+local cam = { x = 0, back = 0 }
+local function follow_camera(dt)
+  local home = HALF_L + 0.6                          -- where you start: the camera's resting place
+  cam.x = lib.approach(cam.x, you.body.x * CAM_SIDE, 4, dt)
+  cam.back = lib.approach(cam.back, you.body.z - home, 4, dt)
+end
 local function camera()
-  gfx.camera(0, 4.0, 6.0, 0, 0.6, -0.2, 50)   -- portrait (game.cfg): behind and above you, the whole table in view
+  gfx.camera(cam.x, 4.0 + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK,
+             cam.x * 0.7, 0.6, -0.2 + cam.back * 0.2, 50)
 end
 
 -- ---------------------------------------------------------------- shots
@@ -701,6 +712,7 @@ function update(dt)
     if effects[i].t > 0.3 then table.remove(effects, i) end
   end
   fingers(dt)
+  follow_camera(dt)
 
   timer = timer - dt
   if state == "serve" and server == "cpu" and timer <= 0 then
