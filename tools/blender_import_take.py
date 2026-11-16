@@ -16,7 +16,7 @@ def script_file():
     for text in bpy.data.texts:
         if text.filepath and Path(bpy.path.abspath(text.filepath)).name == "blender_import_take.py":
             return Path(bpy.path.abspath(text.filepath)).resolve()
-    return Path(__file__).resolve()
+    return Path(globals().get("__file__", "tools/blender_import_take.py")).resolve()
 
 
 CAPTURES = script_file().parent.parent / "captures"

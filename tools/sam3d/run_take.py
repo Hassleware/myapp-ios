@@ -258,13 +258,17 @@ def write_bvh(path, positions, rotations, parents, names, fps):
     roots = [i for i in range(count) if parents[i] < 0]
     root = roots[0]
     children = {i: [c for c in range(count) if parents[c] == i] for i in range(count)}
-    # Each bone's offset in its parent's frame is fixed for a rigid skeleton; take the median over the take.
+    # The rest pose is the take's first frame (the performer standing after the countdown), so Blender shows a
+    # person, not a tangle, and retargeting tools have a sensible pose to match bones in. A bone's offset is its
+    # direction and length in that frame; each frame's turns are measured from it. The bone lengths are the median
+    # over the take, since a rigid skeleton's bones don't change length.
     offsets = np.zeros((count, 3))
     for j in range(count):
         p = parents[j]
         if p >= 0:
-            local = np.einsum("fji,fj->fi", rotations[:, p], positions[:, j] - positions[:, p])
-            offsets[j] = np.median(local, axis=0)
+            in_parent = np.einsum("fji,fj->fi", rotations[:, p], positions[:, j] - positions[:, p])
+            offsets[j] = rotations[0, p] @ np.median(in_parent, axis=0)
+    turned = np.einsum("fjik,jlk->fjil", rotations, rotations[0])   # each joint's turn since the first frame
 
     lines, order = ["HIERARCHY"], []
 
@@ -284,10 +288,10 @@ def write_bvh(path, positions, rotations, parents, names, fps):
         lines.append(pad + "}")
 
     write(root, 0)
-    local = rotations.copy()
+    local = turned.copy()
     for j in range(count):
         if parents[j] >= 0:
-            local[:, j] = np.einsum("fji,fjk->fik", rotations[:, parents[j]], rotations[:, j])
+            local[:, j] = np.einsum("fji,fjk->fik", turned[:, parents[j]], turned[:, j])
     euler = Rotation.from_matrix(local.reshape(-1, 3, 3)).as_euler("ZXY", degrees=True).reshape(frames, count, 3)
     lines += ["MOTION", f"Frames: {frames}", f"Frame Time: {1 / fps:.6f}"]
     for f in range(frames):
