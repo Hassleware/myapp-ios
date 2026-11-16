@@ -353,6 +353,16 @@ local function side_of(z) return z > 0 and "player" or "cpu" end
 local function other(who) return who == "player" and "cpu" or "player" end
 local function say(text) message, message_time = text, sys.real_time() end
 
+-- Every word on screen starts with a capital and goes on in lower case ("Your Serve"), except CPU and the
+-- key names WASD, which stay in capitals. The title is drawn as it is, in full capitals.
+local CAPITALS = { CPU = true, WASD = true }
+local function words(s)
+  return (s:gsub("%a[%a']*", function(w)
+    if CAPITALS[w:upper()] then return w:upper() end
+    return w:sub(1, 1):upper() .. w:sub(2):lower()
+  end))
+end
+
 local function camera()
   gfx.camera(0, 3.0, 4.4, 0, 0.5, -0.8, 60)   -- portrait (game.cfg): far and high enough to see the whole table
 end
@@ -723,18 +733,18 @@ function draw()
   local w, h = gfx.size()
   local left, top, right = gfx.safe()
   gfx.text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)
-  local board = string.format("YOU %d  -  %d CPU", score.player, score.cpu)
+  local board = words(string.format("YOU %d  -  %d CPU", score.player, score.cpu))
   gfx.text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
-  local serving = (state == "serve" or state == "point") and (serve_turn() == "player" and "YOUR SERVE" or "CPU SERVES") or ""
+  local serving = words((state == "serve" or state == "point") and (serve_turn() == "player" and "YOUR SERVE" or "CPU SERVES") or "")
   gfx.text(serving, w - right - gfx.text_width(serving, 18) - 24, top + 60, 18, 0.7, 0.75, 0.9)
-  if wins > 0 then gfx.text("WINS " .. wins, left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
+  if wins > 0 then gfx.text(words("WINS " .. wins), left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
 
   local center = nil
   if state == "serve" and server == "player" then center = "CLICK OR SPACE TO SERVE" end
   if state == "over" then center = message .. "   CLICK TO PLAY AGAIN" end
-  if center then gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
+  if center then center = words(center) gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
-    gfx.text(message, (w - gfx.text_width(message, 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
+    gfx.text(words(message), (w - gfx.text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
-  gfx.text("HOLD THE MOUSE AND MOVE   -   WASD", left + 80, h - 60, 16, 0.55, 0.55, 0.7)
+  gfx.text(words("HOLD THE MOUSE AND MOVE   -   WASD"), left + 80, h - 60, 16, 0.55, 0.55, 0.7)
 end
