@@ -1,14 +1,17 @@
--- The wooden mannequin playing a mocap take, with its feet grounded by IK.
+-- The wooden mannequin playing a mocap take, with gravity and grounded, rolling feet.
 -- mannequin.glb is made on the PC by tools/blender_mannequin.py (your model, plus a take retargeted onto it).
--- Drag to turn the camera round. Tap to switch the foot IK on and off, to compare.
+-- Drag to turn the camera round. Tap to switch the IK and gravity on and off, to compare.
 --
--- Foot IK, every frame, after the animation has posed the body:
---   * a ray from above each ankle finds the ground below it (the floor, or the wooden step under one foot);
---   * a foot the animation has low and nearly still is planted: eased onto the ground and held where it landed,
---     so it can't slide; a foot in mid-step follows the animation, but never goes through the ground;
---   * if a foot can't reach its spot, the hips lower just enough;
---   * thigh and shin turn (two-bone IK) to put the ankle there, the knee bending the way the animation had it;
---   * a planted foot tilts so its sole lies flat on the ground below it, heel and toes down, keeping its heading.
+-- Every frame, after the animation has posed the body:
+--   * gravity: the body falls until its lowest foot rests on the ground below it, and is pushed up rather than
+--     let a foot sink in;
+--   * each foot has two contact points, heel and toes. A ray finds the ground under each. A point the animation
+--     has low and nearly still is planted: eased onto the ground and held where it touched down. So stepping off,
+--     the heel rises first while the toes stay put and the foot pivots on them; landing, the heel touches first
+--     and the foot rolls down flat. A point in the air follows the animation, but never goes through the ground;
+--   * the foot is turned to sit on its two points, and levelled side to side when both are down;
+--   * if a foot can't reach, the hips lower just enough; thigh and shin turn (two-bone IK) to put the ankle in
+--     place, the knee bending the way the animation had it.
 
 local lib = include("lib.lua")
 
@@ -17,15 +20,19 @@ local anim = lib.animation(dummy)
 local clips = model.clips(dummy)
 local yaw, ik_on = 0.3, true
 
-local PLANT_HEIGHT = 0.05   -- metres above its resting height at which the animation's ankle counts as down
-local PLANT_SPEED = 0.35    -- metres a second: an ankle moving faster than this is stepping
-local EASE = 12             -- how quickly a foot settles onto or lifts off the ground (bigger is snappier)
-local RELEASE = 0.25        -- a planted foot this far from the animation's lets go, so the body isn't held back
+local PLANT_HEIGHT = 0.035  -- metres above the ground at which the animation's heel or toes count as down
+local PLANT_SPEED = 0.35    -- metres a second: a heel or toe moving faster than this is in a step
+local EASE = 14             -- how quickly a heel or toe settles onto or lifts off the ground (bigger is snappier)
+local RELEASE = 0.25        -- a planted point this far from the animation's lets go, so the body isn't held back
+local GRAVITY = 9.8         -- metres a second squared
+local HEEL_BACK, TOES_FRONT = 0.045, 0.16   -- the sole's contact points, behind and ahead of the ankle (metres)
+local HEEL_UP = 0.06        -- the toes stay planted until the heel has risen this far: heel first, toes last
 
 -- The collision world the feet stand on: the floor and a low wooden step.
 local STEP = { x = 0.32, y = 0.04, z = 0.05, sx = 0.42, sy = 0.08, sz = 0.8 }
 local legs = {}
-local ankle_rest, hips_parent
+local hips_parent
+local fall = { offset = 0, speed = 0 }   -- gravity: how far the body has dropped, and how fast it is falling
 local hips_drop = 0
 
 -- ---------------------------------------------------------------- small vector and rotation helpers
@@ -56,6 +63,13 @@ local function from_to(a, b)
   return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
 end
 
+-- Part of a turn: all of it at w = 1, none at w = 0.
+local function partly(q, w)
+  local p = { q[1] * w, q[2] * w, q[3] * w, 1 + (q[4] - 1) * w }
+  local l = math.sqrt(p[1] ^ 2 + p[2] ^ 2 + p[3] ^ 2 + p[4] ^ 2)
+  return { p[1] / l, p[2] / l, p[3] / l, p[4] / l }
+end
+
 -- A bone's place and turn in the model, as the engine has it right now.
 local function joint(name)
   local x, y, z, qx, qy, qz, qw = model.joint(dummy, anim.animator, name)
@@ -69,6 +83,14 @@ local function set_turn(name, parent_turn, turn)
   model["local"](dummy, anim.animator, name, t1, t2, t3, q[1], q[2], q[3], q[4], s1, s2, s3)
 end
 
+-- Moves the whole body up or down (through the hips, the root of the skeleton).
+local function lift_body(dy)
+  local _, parent_turn = joint(hips_parent)
+  local shift = rotate(qinv(parent_turn), v(0, dy, 0))
+  local t1, t2, t3, q1, q2, q3, q4, s1, s2, s3 = model["local"](dummy, anim.animator, "hips")
+  model["local"](dummy, anim.animator, "hips", t1 + shift[1], t2 + shift[2], t3 + shift[3], q1, q2, q3, q4, s1, s2, s3)
+end
+
 -- The ground's height under a point, and which way the ground faces there.
 local function ground_below(p)
   local hit, _, y, _, nx, ny, nz = phys.raycast(p[1], p[2] + 0.8, p[3], 0, -1, 0, 3)
@@ -76,59 +98,90 @@ local function ground_below(p)
   return y, v(nx, ny, nz)
 end
 
--- Part of a turn: all of it at w = 1, none at w = 0.
-local function partly(q, w)
-  local p = { q[1] * w, q[2] * w, q[3] * w, 1 + (q[4] - 1) * w }
-  local l = math.sqrt(p[1] ^ 2 + p[2] ^ 2 + p[3] ^ 2 + p[4] ^ 2)
-  return { p[1] / l, p[2] / l, p[3] / l, p[4] / l }
+-- The heel and toes of a foot, where the animation has them now.
+local function sole_points(leg)
+  local ankle, turn = joint(leg.foot)
+  return ankle, turn, add(ankle, rotate(turn, leg.heel_local)), add(ankle, rotate(turn, leg.toes_local))
 end
 
--- ---------------------------------------------------------------- the IK
+-- ---------------------------------------------------------------- one contact point: heel or toes
+
+local function contact(point, at, dt, hold)
+  local ground, normal = ground_below(at)
+  local speed = point.last and len(sub(at, point.last)) / math.max(dt, 1e-4) or 0
+  point.last = at
+  local down = at[2] - ground < PLANT_HEIGHT and speed < PLANT_SPEED
+  if down and not point.lock then point.lock = v(at[1], 0, at[3]) end
+  local drifted = point.lock and len(v(at[1] - point.lock[1], 0, at[3] - point.lock[3])) > RELEASE
+  if drifted or (not down and not hold) then point.lock = nil end
+  point.weight = lib.approach(point.weight, point.lock and 1 or 0, EASE, dt)
+  local target = v(at[1], at[2], at[3])
+  if point.lock then
+    target[1] = lib.lerp(at[1], point.lock[1], point.weight)
+    target[3] = lib.lerp(at[3], point.lock[3], point.weight)
+  end
+  target[2] = math.max(lib.lerp(at[2], ground, point.weight), ground)   -- never through the ground
+  point.target, point.ground, point.normal = target, ground, normal
+  return target
+end
+
+-- ---------------------------------------------------------------- gravity, then the feet
+
+local function fall_to_ground(dt)
+  -- How high the lowest heel or toe is above the ground under it, with the animation as it is.
+  local lowest = math.huge
+  for _, leg in ipairs(legs) do
+    local _, _, heel, toes = sole_points(leg)
+    lowest = math.min(lowest, heel[2] - ground_below(heel), toes[2] - ground_below(toes))
+  end
+  -- Falls while the lowest foot is above the ground; lands on it; never lets it sink in.
+  fall.speed = fall.speed - GRAVITY * dt
+  fall.offset = fall.offset + fall.speed * dt
+  if fall.offset + lowest <= 0 then
+    fall.offset, fall.speed = -lowest, 0
+  end
+  lift_body(fall.offset)
+end
 
 local function solve_feet(dt)
-  -- Where each foot should go.
+  -- Where each foot should be: its heel and toes, then the ankle that puts them there.
   local drop_needed = 0
   for _, leg in ipairs(legs) do
-    local ankle = joint(leg.foot)
-    local hip = joint(leg.thigh)
-    local ground, normal = ground_below(ankle)
-    local floor = ground + ankle_rest
-    leg.normal = normal
-    local speed = leg.last and len(sub(ankle, leg.last)) / math.max(dt, 1e-4) or 0
-    leg.last = ankle
-    local down = ankle[2] - ankle_rest < PLANT_HEIGHT and speed < PLANT_SPEED
-    leg.weight = lib.approach(leg.weight, down and 1 or 0, EASE, dt)
-    if down and not leg.lock then leg.lock = v(ankle[1], 0, ankle[3]) end
-    if not down or (leg.lock and len(v(ankle[1] - leg.lock[1], 0, ankle[3] - leg.lock[3])) > RELEASE) then leg.lock = nil end
-
-    local target = v(ankle[1], ankle[2], ankle[3])
-    if leg.lock then
-      target[1] = lib.lerp(ankle[1], leg.lock[1], leg.weight)
-      target[3] = lib.lerp(ankle[3], leg.lock[3], leg.weight)
+    local ankle, turn, heel, toes = sole_points(leg)
+    local heel_t = contact(leg.heel, heel, dt)
+    -- The toes hold the ground until the heel is down no longer and has risen HEEL_UP: the foot rolls off them.
+    local heel_up = leg.heel.lock == nil and heel_t[2] - leg.heel.ground > HEEL_UP
+    local toes_t = contact(leg.toes, toes, dt, leg.toes.lock ~= nil and not heel_up)
+    -- Turn the foot so heel-to-toes runs where the targets do: this is the pivot on the toes or heel.
+    local foot = qmul(from_to(sub(toes, heel), sub(toes_t, heel_t)), turn)
+    -- With both down, level it side to side onto the ground.
+    local both = math.min(leg.heel.weight, leg.toes.weight)
+    if both > 0 then
+      local along = unit(sub(toes_t, heel_t))
+      local normal = unit(add(leg.heel.normal, leg.toes.normal))
+      local up = rotate(foot, leg.sole_up)
+      local up_flat = sub(up, mul(along, dot(up, along)))
+      local normal_flat = sub(normal, mul(along, dot(normal, along)))
+      if len(up_flat) > 1e-4 and len(normal_flat) > 1e-4 then
+        foot = qmul(partly(from_to(up_flat, normal_flat), both), foot)
+      end
     end
-    target[2] = math.max(lib.lerp(ankle[2], floor, leg.weight), floor)   -- never through the ground
-    leg.target, leg.floor = target, floor
-
-    local knee = joint(leg.shin)
+    leg.turn = foot
+    leg.target = sub(heel_t, rotate(foot, leg.heel_local))   -- the ankle, from the heel
+    local hip, knee = joint(leg.thigh), joint(leg.shin)
     local reach = (len(sub(knee, hip)) + len(sub(ankle, knee))) * 0.995
-    drop_needed = math.max(drop_needed, len(sub(target, hip)) - reach)
+    drop_needed = math.max(drop_needed, len(sub(leg.target, hip)) - reach)
   end
 
-  -- Lower the hips when a foot can't reach.
   hips_drop = lib.approach(hips_drop, drop_needed, EASE, dt)
-  if hips_drop > 1e-4 then
-    local _, parent_turn = joint(hips_parent)
-    local shift = rotate(qinv(parent_turn), v(0, -hips_drop, 0))
-    local t1, t2, t3, q1, q2, q3, q4, s1, s2, s3 = model["local"](dummy, anim.animator, "hips")
-    model["local"](dummy, anim.animator, "hips", t1 + shift[1], t2 + shift[2], t3 + shift[3], q1, q2, q3, q4, s1, s2, s3)
-  end
+  if hips_drop > 1e-4 then lift_body(-hips_drop) end
 
   -- Two-bone IK for each leg.
   local _, hips_turn = joint("hips")
   for _, leg in ipairs(legs) do
     local hip, thigh_turn = joint(leg.thigh)
     local knee, shin_turn = joint(leg.shin)
-    local ankle, foot_turn = joint(leg.foot)
+    local ankle = joint(leg.foot)
     local a, b = len(sub(knee, hip)), len(sub(ankle, knee))
     local to_target = sub(leg.target, hip)
     local d = math.min(math.max(len(to_target), math.abs(a - b) + 1e-3), a + b - 1e-3)
@@ -139,18 +192,13 @@ local function solve_feet(dt)
     local cos_hip = math.max(-1, math.min(1, (a * a + d * d - b * b) / (2 * a * d)))
     local new_knee = add(add(hip, mul(dir, a * cos_hip)), mul(bend, a * math.sqrt(1 - cos_hip * cos_hip)))
     local new_ankle = add(hip, mul(dir, d))
-
     local turn_thigh = from_to(sub(knee, hip), sub(new_knee, hip))
     local new_thigh = qmul(turn_thigh, thigh_turn)
     local shin_dir = rotate(turn_thigh, sub(ankle, knee))
     local new_shin = qmul(from_to(shin_dir, sub(new_ankle, new_knee)), qmul(turn_thigh, shin_turn))
     set_turn(leg.thigh, hips_turn, new_thigh)
     set_turn(leg.shin, new_thigh, new_shin)
-    -- Flat on the ground: turn the sole's "up" onto the ground's, as much as the foot is planted. The sole's up
-    -- is found from the T-pose, where the foot stands flat; turning only that keeps the foot's heading.
-    local sole_up = rotate(foot_turn, leg.sole_up)
-    local flat = qmul(partly(from_to(sole_up, leg.normal), leg.weight), foot_turn)
-    set_turn(leg.foot, new_shin, flat)
+    set_turn(leg.foot, new_shin, leg.turn)
   end
 end
 
@@ -166,24 +214,29 @@ function init()
   phys.box(STEP.x, STEP.y, STEP.z, STEP.sx, STEP.sy, STEP.sz)
   legs = {}
   for _, side in ipairs({ "L", "R" }) do
-    legs[#legs + 1] = { thigh = "thigh." .. side, shin = "shin." .. side, foot = "foot." .. side, weight = 0 }
-  end
-  local _, rest_y = model.joint(dummy, 0, "foot.L")   -- the ankle's height above the floor in the T-pose
-  ankle_rest = rest_y or 0.1
-  for _, leg in ipairs(legs) do   -- which way the sole faces, in the foot's own terms (it stands flat in the T-pose)
-    local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, leg.foot)
-    leg.sole_up = rotate(qinv({ qx, qy, qz, qw }), v(0, 1, 0))
+    local leg = { thigh = "thigh." .. side, shin = "shin." .. side, foot = "foot." .. side,
+                  heel = { weight = 0 }, toes = { weight = 0 } }
+    -- The T-pose stands flat on the floor, so it gives the sole's points and its "up" in the foot's own terms.
+    local x, y, z, qx, qy, qz, qw = model.joint(dummy, 0, leg.foot)
+    local back = qinv({ qx, qy, qz, qw })
+    leg.heel_local = rotate(back, v(0, -y, -HEEL_BACK))
+    leg.toes_local = rotate(back, v(0, -y, TOES_FRONT))
+    leg.sole_up = rotate(back, v(0, 1, 0))
+    legs[#legs + 1] = leg
   end
   for _, n in ipairs(model.nodes(dummy)) do
     if n.name == "hips" and n.parent then hips_parent = model.nodes(dummy)[n.parent].name end
   end
-  hips_drop = 0
+  fall.offset, fall.speed, hips_drop = 0, 0, 0
   play(1)
 end
 
 function update(dt)
   anim:update(dt)
-  if ik_on and dt > 0 then solve_feet(dt) end
+  if ik_on and dt > 0 then
+    fall_to_ground(dt)
+    solve_feet(dt)
+  end
   for _, t in ipairs(input.touches()) do
     if t.phase == "move" then yaw = yaw - t.dx * 0.01 end
     if t.phase == "up" and math.abs(t.dx) < 2 then ik_on = not ik_on end
@@ -199,19 +252,21 @@ function draw()
   gfx.plane(0, 0, 0, 8, 8, 0.32, 0.30, 0.34)
   gfx.cube(STEP.x, STEP.y, STEP.z, STEP.sx, STEP.sy, STEP.sz, 0.45, 0.32, 0.22)
   model.draw(dummy, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, anim.animator)
-  if ik_on then   -- a mark under each planted foot
+  if ik_on then   -- marks under planted heels and toes
+    gfx.unlit(true)
     for _, leg in ipairs(legs) do
-      if leg.target and leg.weight > 0.5 then
-        gfx.unlit(true)
-        gfx.sphere(leg.target[1], leg.floor - ankle_rest + 0.005, leg.target[3], 0.05, 0.3, 1.0, 0.5)
-        gfx.unlit(false)
+      for _, point in ipairs({ leg.heel, leg.toes }) do
+        if point.target and point.weight > 0.5 then
+          gfx.sphere(point.target[1], point.ground + 0.004, point.target[3], 0.03, 0.3, 1.0, 0.5)
+        end
       end
     end
+    gfx.unlit(false)
   end
 
   local left, top = gfx.safe()
   local name = clips[1] and clips[1].name or "no clips in mannequin.glb"
   gfx.text("MANNEQUIN  -  " .. name, left + 80, top + 24, 26, 1, 1, 1)
-  gfx.text("FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
+  gfx.text("GRAVITY + FOOT IK " .. (ik_on and "ON" or "OFF") .. "   (tap to switch, drag to turn)", left + 80, top + 60, 18,
            ik_on and 0.5 or 0.9, ik_on and 1.0 or 0.6, ik_on and 0.6 or 0.5)
 end
