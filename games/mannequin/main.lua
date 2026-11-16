@@ -16,6 +16,8 @@
 local lib = include("lib.lua")
 
 local dummy = model.load("mannequin.glb")
+local bat = model.load("bat.glb")   -- a table tennis bat duct-taped to a hand (tools/blender_bats.py), one per hand
+local hands = {}
 local anim = lib.animation(dummy)
 local clips = model.clips(dummy)
 local yaw, ik_on = 0.3, true
@@ -227,6 +229,14 @@ function init()
   for _, n in ipairs(model.nodes(dummy)) do
     if n.name == "hips" and n.parent then hips_parent = model.nodes(dummy)[n.parent].name end
   end
+  -- The bat is modelled on the left hand in the T-pose; the right hand gets it turned round (half a turn about up).
+  -- Its turn relative to each hand bone is worked out once from the T-pose, then it follows the hand.
+  hands = {}
+  for _, side in ipairs({ "L", "R" }) do
+    local _, _, _, qx, qy, qz, qw = model.joint(dummy, 0, "hand." .. side)
+    local facing = side == "L" and { 0, 0, 0, 1 } or { 0, 1, 0, 0 }
+    hands[#hands + 1] = { bone = "hand." .. side, offset = qmul(qinv({ qx, qy, qz, qw }), facing) }
+  end
   fall.offset, fall.speed, hips_drop = 0, 0, 0
   play(1)
 end
@@ -252,6 +262,11 @@ function draw()
   gfx.plane(0, 0, 0, 8, 8, 0.32, 0.30, 0.34)
   gfx.cube(STEP.x, STEP.y, STEP.z, STEP.sx, STEP.sy, STEP.sz, 0.45, 0.32, 0.22)
   model.draw(dummy, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, anim.animator)
+  for _, hand in ipairs(hands) do
+    local wrist, turn = joint(hand.bone)
+    local q = qmul(turn, hand.offset)
+    model.draw(bat, wrist[1], wrist[2], wrist[3], q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1)
+  end
   if ik_on then   -- marks under planted heels and toes
     gfx.unlit(true)
     for _, leg in ipairs(legs) do
