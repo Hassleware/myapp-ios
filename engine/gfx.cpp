@@ -111,6 +111,9 @@ struct Font {
     std::map<uint32_t, Glyph> glyphs;
     std::string key;
     Sint64 mtime = 0;
+    bool engine = false;    // the engine's own: kept when games change
+    float boost = 1;        // the engine's font is scaled so its capitals are as tall as the 8x8 font's
+    float lift = 0;         // and raised so their tops sit where the 8x8 font's do
 };
 
 struct Draw {
@@ -1255,7 +1258,7 @@ void run_pass(Pass& pass) {
 void free_game_resources(bool everything) {
     std::vector<Handle> gone;
     fonts.each([&](Handle h, Font& f) {
-        if (everything || file_time(f.key) != f.mtime) gone.push_back(h);
+        if (!f.engine && (everything || file_time(f.key) != f.mtime)) gone.push_back(h);
     });
     for (Handle h : gone) free_font(h);
     gone.clear();
@@ -2006,8 +2009,17 @@ void finish_vertices(std::vector<Vertex>& v, const std::vector<uint32_t>& idx, b
     }
 }
 
+static Handle open_font(const std::string& path, float pixelHeight, bool engine);
+
 Handle load_font(const std::string& name, float pixelHeight) {
-    std::string path = game_path(name);
+    return open_font(game_path(name), pixelHeight, false);
+}
+
+Handle load_engine_font(const std::string& path, float pixelHeight) {
+    return open_font(path, pixelHeight, true);
+}
+
+static Handle open_font(const std::string& path, float pixelHeight, bool engine) {
     pixelHeight = SDL_clamp(pixelHeight, 8.0f, 200.0f);
     std::string key = path;
     Handle found = 0;
@@ -2033,7 +2045,11 @@ Handle load_font(const std::string& name, float pixelHeight) {
     f->ascent = ascent * f->scale;
     f->alpha.assign((size_t)ATLAS_SIZE * ATLAS_SIZE, 0);
     std::vector<uint8_t> blank((size_t)ATLAS_SIZE * ATLAS_SIZE * 4, 0);
-    f->atlas = make_texture(ATLAS_SIZE, ATLAS_SIZE, blank.data(), TEX_NOMIP | TEX_CLAMP | TEX_DATA, OWNER_FILE);
+    f->atlas = make_texture(ATLAS_SIZE, ATLAS_SIZE, blank.data(), TEX_NOMIP | TEX_CLAMP | TEX_DATA, engine ? OWNER_ENGINE : OWNER_FILE);
+    f->engine = engine;
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (engine && stbtt_GetCodepointBox(&f->info, 'H', &x0, &y0, &x1, &y1) && y1 > y0)
+        f->boost = 0.875f * pixelHeight / ((y1 - y0) * f->scale), f->lift = f->ascent - y1 * f->scale;
     f->key = key;
     f->mtime = file_time(path);
     return h;
@@ -2269,14 +2285,14 @@ void text(const std::string& s, float x, float y, float size, const float rgba[4
     lin4(rgba, color);
     Font* f = fonts.get(ds.font);
     if (f) {
-        float k = size / f->px;
+        float k = size / f->px * f->boost;
         uint32_t previous = 0;
         for (size_t i = 0; i < s.size();) {
             uint32_t cp = next_codepoint(s, i);
             if (cp == '\n') { penX = x; y += size * 1.25f; previous = 0; continue; }
             const Glyph* g = glyph_for(*f, cp);
             if (previous) penX += stbtt_GetCodepointKernAdvance(&f->info, (int)previous, (int)cp) * f->scale * k;
-            if (g->w > 0) quad_2d(f->atlas, penX + g->x0 * k, y + (f->ascent + g->y0) * k, g->w * k, g->h * k, color, g->u0, g->v0, g->u1, g->v1);
+            if (g->w > 0) quad_2d(f->atlas, penX + g->x0 * k, y + (f->ascent - f->lift + g->y0) * k, g->w * k, g->h * k, color, g->u0, g->v0, g->u1, g->v1);
             penX += g->advance * k;
             previous = cp;
         }
@@ -2310,8 +2326,8 @@ float text_width(const std::string& s, float size) {
         uint32_t cp = next_codepoint(s, i);
         if (cp == '\n') { current = 0; previous = 0; continue; }
         if (f) {
-            if (previous) current += stbtt_GetCodepointKernAdvance(&f->info, (int)previous, (int)cp) * f->scale * size / f->px;
-            current += glyph_for(*f, cp)->advance * size / f->px;
+            if (previous) current += stbtt_GetCodepointKernAdvance(&f->info, (int)previous, (int)cp) * f->scale * size / f->px * f->boost;
+            current += glyph_for(*f, cp)->advance * size / f->px * f->boost;
         } else {
             current += size;
         }

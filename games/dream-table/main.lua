@@ -21,6 +21,7 @@ local me = { x = 0, y = TABLE_Y + 0.25, vx = 0, vy = 0, tx = 0, ty = TABLE_Y + 0
 local cpu = { x = 0, y = TABLE_Y + 0.25 }
 local score = { player = 0, cpu = 0 }
 local wins = save.get("wins", 0)
+local font = gfx.load_font("MyDotFont.ttf", 64)   -- your own dot font, for every word on screen
 local trail = {}                      -- where the ball was, newest first, one every TRAIL_STEP seconds
 local TRAIL_STEP, TRAIL_WIDTH = 1 / 30, 0.05
 local trail_clock = 0
@@ -717,7 +718,8 @@ function draw()
   gfx.blend("opaque")
   gfx.shader()
 
-  -- Score and messages.
+  -- Score and messages, in your dot font.
+  gfx.font(font)
   local w, h = gfx.size()
   local left, top, right = gfx.safe()
   gfx.text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)

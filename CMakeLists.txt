@@ -134,7 +134,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
   # Pack the engine's shaders and the games inside the app.
   add_custom_command(TARGET gamelab POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/engine/shaders $<TARGET_BUNDLE_CONTENT_DIR:gamelab>/shaders)
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/engine/shaders $<TARGET_BUNDLE_CONTENT_DIR:gamelab>/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/engine/fonts $<TARGET_BUNDLE_CONTENT_DIR:gamelab>/fonts)
   if(SINGLE_GAME)
     add_custom_command(TARGET gamelab POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/games/${SINGLE_GAME} $<TARGET_BUNDLE_CONTENT_DIR:gamelab>/games/${SINGLE_GAME})

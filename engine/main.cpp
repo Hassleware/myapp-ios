@@ -169,8 +169,12 @@ void show_list() {
     refresh_games();
 }
 
+// Game Lab's own text is in MyDotFont (engine/fonts). Games keep their own fonts (the 8x8 one unless they pick one).
+gfx::Handle uiFont = 0;
+
 // Frame time, drawing load and memory, in a corner. F3 on the PC, sys.hud(true) from a game.
 void draw_hud() {
+    gfx::font(uiFont);
     gfx::Stats s = gfx::stats();
     char line[160];
     SDL_snprintf(line, sizeof(line), "%3.0f FPS %4.1f MS\n%d DRAWS %dK VERTS\n%d TEX %d MESH\nLUA %d KB  %d SOUNDS", 1.0f / smoothedDt, smoothedDt * 1000.0f,
@@ -199,6 +203,7 @@ std::string wrap(const std::string& text, size_t width) {
 }
 
 void draw_problem(const std::string& title, const std::string& detail) {
+    gfx::font(uiFont);
     const float panel[4] = {0.10f, 0.02f, 0.03f, 0.92f}, red[4] = {1.0f, 0.45f, 0.42f, 1}, white[4] = {1, 1, 1, 0.92f};
     float w = gfx::view_width();
     gfx::rect(0, 0, w, gfx::view_height(), panel);
@@ -207,6 +212,7 @@ void draw_problem(const std::string& title, const std::string& detail) {
 }
 
 void draw_list() {
+    gfx::font(uiFont);
     const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.55f}, row[4] = {1, 1, 1, 0.07f}, accent[4] = {0.36f, 0.82f, 0.63f, 1};
     // Everything sits inside the part of the screen the phone leaves free.
     const float* safe = gfx::safe_area();
@@ -575,11 +581,13 @@ void frame() {
 #if !defined(SDL_PLATFORM_IOS)
         gfx::ui_log(checking);
 #endif
+        gfx::font(0);   // a game starts each frame on its own font, not Game Lab's
         script::draw();
         // The engine's own drawing must not inherit a shader, texture or target the game left set.
         gfx::target(0);
         gfx::reset_state();
         input::draw();
+        gfx::font(uiFont);
         if (showHud || script::hud_wanted()) draw_hud();
 #if !defined(SINGLE_GAME)
         // A small button to get back to the game list, tucked into the screen's top-left corner. It sits on the
@@ -591,7 +599,7 @@ void frame() {
         if (curve > 20 + gap) backX = curve - (curve - 20 - gap) * 0.7071f;
         float backY = backX;
         gfx::circle(backX, backY, 20, back);
-        gfx::text("x", backX - 8, backY - 9, 16, ink);
+        gfx::text("X", backX - gfx::text_width("X", 16) / 2, backY - 8, 16, ink);
         float tapX = 0, tapY = 0;
         bool leave = input::tap(tapX, tapY) && tapX < backX + 40 && tapY < backY + 40;
 #else
@@ -662,9 +670,11 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 #if defined(DEV_REPO_DIR)
     bundledDir = std::string(DEV_REPO_DIR) + "/games";
     engineShaders = std::string(DEV_REPO_DIR) + "/engine/shaders";
+    std::string engineFonts = std::string(DEV_REPO_DIR) + "/engine/fonts";
 #else
     bundledDir = appDir + "games";
     engineShaders = appDir + "shaders";
+    std::string engineFonts = appDir + "fonts";
 #endif
     char* pref = SDL_GetPrefPath("starter", "gamelab");
     std::string prefDir = pref ? pref : "";
@@ -722,6 +732,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Game Lab can't start", fatal.c_str(), window);
         return SDL_APP_FAILURE;
     }
+    uiFont = gfx::load_engine_font(engineFonts + "/MyDotFont.ttf", 64);
     audio::init();   // a game still runs, silently, if this fails
     input::init();
 

@@ -86,6 +86,8 @@ const MeshData* mesh_data(Handle mesh);
 void free_mesh(Handle mesh);
 Handle builtin_mesh(Mesh which);
 Handle load_font(const std::string& name, float pixelHeight);
+// A font the engine keeps for the app's whole life (Game Lab's own text), from a full path.
+Handle load_engine_font(const std::string& path, float pixelHeight);
 // Fills in tangents from the texture coordinates, and normals where a mesh has none.
 void finish_vertices(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, bool makeNormals);
 std::string game_path(const std::string& name);   // "" if the name tries to leave the game's folder
