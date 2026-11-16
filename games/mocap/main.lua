@@ -3,16 +3,19 @@
 -- graphics card, a stronger model with hands and feet, which writes captures/<name>-sam3d.bvh. The phone shows the PC's progress, then replays
 -- that result (REPLAY switches between that and the live camera).
 -- Prop the phone up about 3 metres away at waist height, or have someone hold it, and keep the whole body in view.
--- Shots: a voice calls them. "Three, two, one, go" starts the recording; then every PERIOD seconds "ready" and
--- "hit!": play a different shot on each "hit", and "stopped" when it ends. Takes are named shots-1,
+-- Shots: "three, two, one, go" starts the recording. Then for every shot, "ready", and a count-in on a steady beat:
+-- beep, beep, beep, BEEP. Hit on the high fourth BEEP (every PERIOD seconds), a different shot each time.
+-- "Stopped" when it ends. Takes are named shots-1,
 -- shots-2...; the PC cuts them into one clip per shot and guesses which shot each is (tools/split_shots.py).
 -- Hands free: raise both hands over your head and hold them there for a second to start, and again to stop.
 
 local lib = include("lib.lua")
 local FIRST_HIT, PERIOD = 4.0, 4.0   -- keep the same as tools/split_shots.py
 local say = {}   -- spoken words, made with Windows' own voice and trimmed to start at once
-for _, word in ipairs({ "three", "two", "one", "go", "ready", "hit", "stopped" }) do say[word] = audio.load(word .. ".wav") end
-local READY_BEFORE = 1.2    -- "ready" comes this many seconds before "hit"
+for _, word in ipairs({ "three", "two", "one", "go", "ready", "stopped", "beat", "hit" }) do say[word] = audio.load(word .. ".wav") end
+local BEAT = 0.5            -- seconds between the count-in beeps; the hit is the fourth
+-- Each shot's calls, in seconds before its hit: "ready", then three beats, then the hit beep.
+local CALLS = { { -2 * BEAT - 1.0, "ready" }, { -3 * BEAT, "beat" }, { -2 * BEAT, "beat" }, { -BEAT, "beat" }, { 0, "hit" } }
 local next_beep = 0
 local HANDS_UP = 0.8        -- metres above the hips that both hands must be, held for HOLD seconds, to start or stop
 local HOLD = 1.0
@@ -184,11 +187,9 @@ function update(dt)
       input.haptic("medium")
     end
   elseif state == "recording" then
-    -- Calls number 2k ("ready") and 2k+1 ("hit!") belong to shot k.
-    local k, part = next_beep // 2, next_beep % 2
-    local at = FIRST_HIT + k * PERIOD - (part == 0 and READY_BEFORE or 0)
-    if sys.real_time() - record_start >= at then
-      audio.play(part == 1 and say.hit or say.ready)
+    local k, call = next_beep // #CALLS, CALLS[next_beep % #CALLS + 1]
+    if sys.real_time() - record_start >= FIRST_HIT + k * PERIOD + call[1] then
+      audio.play(say[call[2]])
       next_beep = next_beep + 1
     end
   end
