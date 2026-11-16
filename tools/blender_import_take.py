@@ -10,7 +10,16 @@ from pathlib import Path
 
 import bpy
 
-CAPTURES = Path(__file__).resolve().parent.parent / "captures"
+def script_file():
+    """Where this script is. Run from Blender's text editor, __file__ is only the text block's name, so ask the
+    text block for the file it was opened from."""
+    for text in bpy.data.texts:
+        if text.filepath and Path(bpy.path.abspath(text.filepath)).name == "blender_import_take.py":
+            return Path(bpy.path.abspath(text.filepath)).resolve()
+    return Path(__file__).resolve()
+
+
+CAPTURES = script_file().parent.parent / "captures"
 
 
 def import_take(path):
@@ -29,7 +38,10 @@ def import_take(path):
 
 if __name__ == "__main__":
     args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    take = Path(args[0]) if args else max(CAPTURES.glob("*.bvh"), key=lambda p: p.stat().st_mtime)
+    takes = [p for p in CAPTURES.glob("*.bvh") if not p.name.startswith("zz-")]   # zz- files are tests
+    if not args and not takes:
+        raise SystemExit(f"No takes in {CAPTURES}. Record one in the mocap game and SEND it first.")
+    take = Path(args[0]) if args else max(takes, key=lambda p: p.stat().st_mtime)
     armature = import_take(take)
     if len(args) > 1:
         # A check for tests: where the feet and head are on the last frame, then save.
