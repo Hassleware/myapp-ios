@@ -1,6 +1,10 @@
--- Dream Table: table tennis against the computer.
--- Hold the mouse button (or a finger) and move to steer your paddle; WASD or the arrow keys work too.
--- Swing faster for a faster shot; where the ball meets the paddle sets the angle.
+-- Dream Table: table tennis, wooden mannequin against wooden mannequin.
+-- You are the near mannequin. Hold and drag on the left half of the screen to walk it: it follows your finger's
+-- movement, wherever you start (a trackpad, not a joystick). Draw a line on the right half to swing: the line's
+-- direction picks the stroke from the recorded shots (the way the bat travelled when it was recorded), and its
+-- direction and length aim the ball and set its pace. Draw it any time before the ball arrives; the mannequin
+-- times the swing and steps to meet the ball. On your serve, a line flicks the ball up off your bat and hits it.
+-- The far mannequin is a polite robot that can't lose.
 -- Rules: first to 11, win by 2, serve changes every 2 points (every point from 10-10).
 -- ponytail: serves go straight to the other side (no first bounce on your own side) and there is no spin.
 
@@ -11,14 +15,8 @@ local TABLE_Y, HALF_W, HALF_L, NET_TOP = 0.76, 0.7625, 1.37, 0.76 + 0.1525
 local R = 0.03                        -- ball radius (a real one is 2 cm; bigger reads better on screen)
 local G = 7.5                         -- a little floatier than real gravity: it's a dream
 local BOUNCE = 0.86                   -- how much height a bounce keeps
-local PADDLE_Z, AI_Z = 1.55, -1.55    -- the planes each paddle moves in
-local REACH, AI_REACH = 0.22, 0.17    -- how far from a paddle's centre the ball can be and still be hit
-local AI_SPEED = 1.9                  -- the computer's top paddle speed, metres a second
-local ASSIST = 0.45                   -- how much your paddle drifts towards an incoming ball (0 to 1)
 
 local ball = { x = 0, y = 1, z = 0, vx = 0, vy = 0, vz = 0 }
-local me = { x = 0, y = TABLE_Y + 0.25, vx = 0, vy = 0, tx = 0, ty = TABLE_Y + 0.25 }
-local cpu = { x = 0, y = TABLE_Y + 0.25 }
 local score = { player = 0, cpu = 0 }
 local wins = save.get("wins", 0)
 local font = gfx.load_font("MyDotFont.ttf", 64)   -- your own dot font, for every word on screen
@@ -42,38 +40,32 @@ do
   trail_mesh = gfx.new_mesh(numbers, indices, "pnu")
 end
 
--- state: "serve" (someone holds the ball), "rally", "point" (a short pause), "over"
-local state, server, last, bounces = "serve", "player", nil, {}
+-- state: "serve" (someone holds the ball), "toss" (a serve in the air), "rally", "point" (a short pause), "over"
+local state, server, last, bounces = "serve", "player", nil, { player = 0, cpu = 0 }
 local message, message_time, timer = "", 0, 0
-local key_was_down = false
 
--- ---------------------------------------------------------------- the opponent: the wooden mannequin
--- It plays the shots you recorded with the mocap game. mannequin.glb is made by tools/blender_mannequin.py from
--- captures/shots-<n>-<k>-<shot>-sam3d.npz, one clip per shot, each with the hit CONTACT seconds in.
--- Every clip also plays mirror-imaged with the bat in the other hand, so 11 recordings give 22 moves.
--- When you hit the ball it plans the whole return: along the ball's flight it finds where each move's bat could
--- meet it, picks one (the height should suit the shot, it should not have to run far, and it likes variety),
--- starts that clip so the recorded hit lands when the ball gets there, and walks to the spot. The ball is only
--- returned if it really touches the bat: miss, and it's your point.
--- Feet: planted feet stay put while the body moves, and step (one at a time) when they fall too far behind;
--- steps the animation makes itself are kept as they are.
+-- ---------------------------------------------------------------- the mannequins
+-- Both play the shots you recorded with the mocap game. mannequin.glb is made by tools/blender_mannequin.py from
+-- captures/shots-<n>-<k>-<shot>-sam3d.npz, one clip per shot, each with the hit CONTACT seconds in. Every clip also
+-- plays mirror-imaged with the bat in the other hand, so 11 recordings give 22 moves.
+-- A swing is planned onto the ball's flight: which move, where its bat meets the ball, where to stand for that,
+-- and when to start the clip so the recorded hit lands as the ball gets there. The ball is only hit if it really
+-- touches the bat. Feet stay planted and step when the body moves away from them; the animation's own steps stay.
 local dummy = model.load("mannequin.glb")
 local bat_model = model.load("bat.glb")
-local anim = lib.animation(dummy)
 local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
 local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it
 local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.2, 0.07   -- a foot this far behind steps, taking this long, this high
 local LIFTED = 0.04                  -- an ankle the animation raises this far is the animation's own step: leave it
-local WALK = 7                       -- how quickly the body heads for its spot (bigger is quicker)
-local CROUCH = 0.3                   -- how far the body may sink (knees bending) to play a high shot on a lower ball
-local moves, hands, bones, legs, effects = {}, {}, {}, {}, {}
+local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
+local CROUCH = 0.3                   -- how far a body may sink (knees bending) to play a high shot on a lower ball
+local TOSS = 2.6                     -- how fast the flick sends the ball up to be served (metres a second)
+local BLEND_TIME = 0.18              -- switching moves: every bone blends from the old pose over this long
+local moves, hands, bones, effects = {}, {}, {}, {}
 local rest = {}                      -- every bone's turn in the T-pose
 local hips_parent
-local TOSS = 2.6                      -- how fast the flick sends the ball up to be served (metres a second)
-local body = { serve_hand = "R", x = 0, y = 0, ty = 0, z = AI_Z - 0.6, tx = 0, tz = AI_Z - 0.6, vx = 0, vz = 0, turn = { 0, 0, 0, 1 },
-               move = nil, plan_for = nil, blade = { 0, 1, AI_Z } }
 
 local function v(x, y, z) return { x, y, z } end
 local function add(a, b) return v(a[1] + b[1], a[2] + b[2], a[3] + b[3]) end
@@ -102,9 +94,17 @@ local function from_to(a, b)
   return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
 end
 
--- A bone's place and turn inside the model, as animator a has it now.
+-- From turn a part of the way to turn b, the short way round.
+local function toward(a, b, t)
+  if a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4] < 0 then b = { -b[1], -b[2], -b[3], -b[4] } end
+  local q = { lib.lerp(a[1], b[1], t), lib.lerp(a[2], b[2], t), lib.lerp(a[3], b[3], t), lib.lerp(a[4], b[4], t) }
+  local l = math.sqrt(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2)
+  return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
+end
+
+-- A bone's place and turn inside the model, as animator a has it now (0: the T-pose).
 local function joint(name, a)
-  local x, y, z, qx, qy, qz, qw = model.joint(dummy, a or anim.animator, name)
+  local x, y, z, qx, qy, qz, qw = model.joint(dummy, a, name)
   return v(x, y, z), { qx, qy, qz, qw }
 end
 
@@ -144,46 +144,16 @@ local function mirror_pose(a)
   write_pose(new, v(-hips[1], hips[2], hips[3]), a)
 end
 
--- From turn a part of the way to turn b, the short way round.
-local function toward(a, b, t)
-  if a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4] < 0 then b = { -b[1], -b[2], -b[3], -b[4] } end
-  local q = { lib.lerp(a[1], b[1], t), lib.lerp(a[2], b[2], t), lib.lerp(a[3], b[3], t), lib.lerp(a[4], b[4], t) }
-  local l = math.sqrt(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2)
-  return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
-end
-
--- Switching moves: the pose it was in is kept, and every bone blends from it into the new move over BLEND_TIME.
--- This works between a mirrored and an unmirrored move too, which an animation cross-fade can't.
-local BLEND_TIME = 0.18
-local blend = { from = nil, t = 1 }
-local function keep_pose()
-  local turns = {}
-  for _, b in ipairs(bones) do turns[b.name] = select(2, joint(b.name)) end
-  blend.from, blend.t = { turns = turns, hips = (joint("hips")) }, 0
-end
-local function blend_pose(dt)
-  if not blend.from then return end
-  blend.t = blend.t + dt / BLEND_TIME
-  if blend.t >= 1 then blend.from = nil return end
-  local w = blend.t * blend.t * (3 - 2 * blend.t)
-  local turns = {}
-  for _, b in ipairs(bones) do turns[b.name] = toward(blend.from.turns[b.name], select(2, joint(b.name)), w) end
-  local hips = joint("hips")
-  write_pose(turns, add(blend.from.hips, mul(sub(hips, blend.from.hips), w)), anim.animator)
-end
-
 -- Where the middle of a hand's bat blade is inside the model.
 local function blade_in_model(side, a)
   local wrist, turn = joint("hand." .. side, a)
   return add(wrist, rot(qmul(turn, hands[side].offset), BLADE[side]))
 end
 
-local function to_world(p) return add(v(body.x, body.y, body.z), rot(body.turn, p)) end
-local function to_model(p) return rot(qinv(body.turn), sub(p, v(body.x, body.y, body.z))) end
-
--- Reads every shot clip once: which shot, which way it faces, where the blade is at the hit; and its mirror image.
+-- Reads every shot clip once: which shot, which way it faces, where the blade is at the hit and which way it is
+-- travelling then (the swing); and the mirror image of each.
 local function learn_moves()
-  moves, bones, legs, hands = {}, {}, {}, {}
+  moves, bones, hands = {}, {}, {}
   local nodes = model.nodes(dummy)
   local function depth(n) local d = 0 while n.parent do d, n = d + 1, nodes[n.parent] end return d end
   for _, n in ipairs(nodes) do
@@ -198,8 +168,6 @@ local function learn_moves()
   for _, b in ipairs(bones) do rest[b.name] = select(2, joint(b.name, 0)) end
   for _, side in ipairs({ "L", "R" }) do
     hands[side] = { bone = "hand." .. side, node = "bat." .. side, offset = qinv(rest["hand." .. side]) }
-    local ankle = joint("foot." .. side, 0)
-    legs[#legs + 1] = { thigh = "thigh." .. side, shin = "shin." .. side, foot = "foot." .. side, rest = ankle[2] }
   end
 
   local scratch = model.animator(dummy)
@@ -209,102 +177,168 @@ local function learn_moves()
       model.pose(dummy, scratch, clip.name, 0, 1)
       local left, right = joint("thigh.L", scratch), joint("thigh.R", scratch)
       local fx, fz = -(left[3] - right[3]), left[1] - right[1]   -- facing, from the body's left (+x faces +z)
-      model.pose(dummy, scratch, clip.name, math.min(CONTACT, clip.duration), 1)
+      model.pose(dummy, scratch, clip.name, CONTACT - 0.15, 1)
+      local before = blade_in_model("R", scratch)
+      model.pose(dummy, scratch, clip.name, CONTACT + 0.15, 1)
+      local after = blade_in_model("R", scratch)
+      model.pose(dummy, scratch, clip.name, CONTACT, 1)
       local blade = blade_in_model("R", scratch)
       for _, mirrored in ipairs({ false, true }) do
-        local turn = yaw_turn(-math.atan(mirrored and -fx or fx, fz))   -- turned to face +z, the player's end
-        local b = mirrored and v(-blade[1], blade[2], blade[3]) or blade
+        local turn = yaw_turn(-math.atan(mirrored and -fx or fx, fz))   -- turned to face +z
+        local flip = mirrored and -1 or 1
+        local b = v(blade[1] * flip, blade[2], blade[3])
+        local swing = rot(turn, v((after[1] - before[1]) * flip, after[2] - before[2], after[3] - before[3]))
+        -- The swing as the player sees it from behind: across (to the body's right is +) and up.
+        local s_right, s_up = -swing[1], swing[2]
+        local l = math.sqrt(s_right * s_right + s_up * s_up)
         moves[#moves + 1] = { clip = clip.name, kind = kind, side = side, mirrored = mirrored, turn = turn,
-                              hand = mirrored and "L" or "R", blade = rot(turn, b), used = 0 }
+                              hand = mirrored and "L" or "R", blade = rot(turn, b),
+                              swing = { s_right / math.max(l, 1e-6), s_up / math.max(l, 1e-6) } }
       end
     end
   end
-  if moves[1] then
-    body.move, body.turn = moves[1], moves[1].turn
-    anim:play(moves[1].clip, { loop = false, speed = 0, time = 0.3, fade = 0 })   -- standing ready
-  end
 end
 
--- The ball's flight from now on: the points where the opponent may hit it (after one bounce on its side,
--- off the end of the table), with how long until it gets there.
-local function flight(serving)
+-- One mannequin. side "cpu" stands at the far end facing +z; "player" at the near end, turned half round.
+local function new_mannequin(side)
+  local m = { side = side, sign = side == "cpu" and -1 or 1, anim = lib.animation(dummy), legs = {},
+              blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
+              face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
+  local z = m.sign * (HALF_L + 0.6)
+  m.body = { x = 0, y = 0, ty = 0, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+             blade = v(0, 1, z) }
+  for _, s in ipairs({ "L", "R" }) do
+    local ankle = joint("foot." .. s, 0)
+    m.legs[#m.legs + 1] = { thigh = "thigh." .. s, shin = "shin." .. s, foot = "foot." .. s, rest = ankle[2] }
+  end
+  if moves[1] then m.anim:play(moves[1].clip, { loop = false, speed = 0, time = 0.3, fade = 0 }) end   -- ready
+  return m
+end
+
+local robot, you
+
+local function to_world(m, p) return add(v(m.body.x, m.body.y, m.body.z), rot(m.body.turn, p)) end
+local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, v(m.body.x, m.body.y, m.body.z))) end
+local function facing(m, move) return qmul(m.face, move.turn) end
+local function blade_offset(m, move) return rot(m.face, move.blade) end
+
+-- Switching moves: the pose it was in is kept, and every bone blends from it into the new move over BLEND_TIME.
+-- This works between a mirrored and an unmirrored move too, which an animation cross-fade can't.
+local function keep_pose(m)
+  local turns = {}
+  for _, b in ipairs(bones) do turns[b.name] = select(2, joint(b.name, m.anim.animator)) end
+  m.blend.from, m.blend.t = { turns = turns, hips = (joint("hips", m.anim.animator)) }, 0
+end
+
+local function blend_pose(m, dt)
+  local blend = m.blend
+  if not blend.from then return end
+  blend.t = blend.t + dt / BLEND_TIME
+  if blend.t >= 1 then blend.from = nil return end
+  local w = blend.t * blend.t * (3 - 2 * blend.t)
+  local turns = {}
+  for _, b in ipairs(bones) do turns[b.name] = toward(blend.from.turns[b.name], select(2, joint(b.name, m.anim.animator)), w) end
+  local hips = joint("hips", m.anim.animator)
+  write_pose(turns, add(blend.from.hips, mul(sub(hips, blend.from.hips), w)), m.anim.animator)
+end
+
+-- The ball's flight from now on: the points where mannequin m may hit it (after one bounce on its side, off the end
+-- of the table; or, serving, on the way down before any bounce), with how long until it gets there.
+local function flight(m, serving)
   local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
-  local own, dt, out = bounces.cpu or 0, 1 / 120, {}
+  local own, dt, out = serving and 0 or (bounces[m.side] or 0), 1 / 120, {}
   for step = 1, 300 do
     vy = vy - G * dt
     x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
     if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
       y, vy, vx, vz = TABLE_Y + R, -vy * BOUNCE, vx * 0.97, vz * 0.97
-      if z < 0 then own = own + 1 end
+      if z * m.sign > 0 then own = own + 1 end
     end
     if y < R or own >= 2 then break end
-    local hittable = serving and (vy < 0 and own == 0) or (not serving and own == 1 and z < -HALF_L + 0.2)
+    local hittable = serving and (vy < 0 and own == 0) or (not serving and own == 1 and z * m.sign > HALF_L - 0.2)
     if hittable and step % 2 == 0 then out[#out + 1] = { x = x, y = y, z = z, t = step * dt } end
   end
   return out
 end
 
--- Plans the return of the ball you just hit (or its own serve, with that hand): which move, where to stand, when
--- to start the swing.
-local function plan(serve_hand)
-  local points = flight(serve_hand ~= nil)
+-- Picks the best (move, point) by cost(move, point, sink, run); then starts it.
+local function choose_and_swing(m, points, cost_of)
   local best, at, best_cost, best_sink = nil, nil, math.huge, 0
-  for _, m in ipairs(moves) do
+  for _, move in ipairs(moves) do
+    local off = blade_offset(m, move)
     for _, p in ipairs(points) do
-      local sx, sz = p.x - m.blade[1], p.z - m.blade[3]          -- where the body would stand
-      local ok = sz < -HALF_L - 0.2 and p.t > 0.3                -- behind the table, with time to swing
-      if serve_hand then ok = ok and m.hand == serve_hand end
-      if ok then
-        local run = math.sqrt((sx - body.x) ^ 2 + (sz - body.z) ^ 2)
-        local sink = math.max(-CROUCH, math.min(0, p.y - m.blade[2]))   -- crouch for a ball below the shot's height
-        local cost = math.abs(p.y - m.blade[2] - sink) * 3 - sink * 0.3 + run * (serve_hand and 1.5 or 0.3)
-                     + m.used * 0.35 + math.random() * 0.05
-        if cost < best_cost then best, at, best_cost, best_sink = m, p, cost, sink end
+      local sx, sz = p.x - off[1], p.z - off[3]                  -- where the body would stand
+      if sz * m.sign > HALF_L + 0.2 and p.t > 0.3 then           -- behind the table, with time to swing
+        local run = math.sqrt((sx - m.body.x) ^ 2 + (sz - m.body.z) ^ 2)
+        local sink = math.max(-CROUCH, math.min(0, p.y - off[2]))   -- crouch for a ball below the shot's height
+        local cost = cost_of(move, p, sink, run)
+        if cost and cost < best_cost then best, at, best_cost, best_sink = move, p, cost, sink end
       end
     end
   end
-  if not best then return end
-  best.used = best.used + 1
-  keep_pose()
-  body.move = best
-  body.tx, body.tz, body.ty = at.x - best.blade[1], at.z - best.blade[3], best_sink
-  anim.layers = {}
-  anim:play(best.clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - at.t),
-                         speed = at.t > CONTACT and CONTACT / at.t or 1 })
+  if not best then return false end
+  m.used[best] = (m.used[best] or 0) + 1
+  keep_pose(m)
+  m.body.move, m.armed = best, true
+  local off = blade_offset(m, best)
+  m.body.tx, m.body.tz, m.body.ty = at.x - off[1], at.z - off[3], best_sink
+  m.anim.layers = {}
+  m.anim:play(best.clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - at.t),
+                           speed = at.t > CONTACT and CONTACT / at.t or 1 })
+  return true
+end
+
+-- The robot's choice: the height should suit the shot, it shouldn't run far, and it likes variety.
+local function plan_robot(m, serve_hand)
+  return choose_and_swing(m, flight(m, serve_hand ~= nil), function(move, p, sink, run)
+    if serve_hand and move.hand ~= serve_hand then return nil end
+    return math.abs(p.y - blade_offset(m, move)[2] - sink) * 3 - sink * 0.3 + run * (serve_hand and 1.5 or 0.3)
+           + (m.used[move] or 0) * 0.35 + math.random() * 0.05
+  end)
+end
+
+-- Your choice, from the line you drew: the move whose recorded swing runs most like the line, that can meet the
+-- ball without much running.
+local function plan_line(m, line, serving)
+  return choose_and_swing(m, flight(m, serving), function(move, p, sink, run)
+    local likeness = move.swing[1] * line.right + move.swing[2] * line.up   -- 1: the same direction
+    return (1 - likeness) * 2.5 + math.abs(p.y - blade_offset(m, move)[2] - sink) * 3 - sink * 0.3 + run * 0.8
+  end)
 end
 
 -- Two-bone IK: thigh and shin turn so the ankle reaches target (inside the model); the foot keeps its turn.
-local function reach(leg, target)
-  local hip, thigh_turn = joint(leg.thigh)
-  local knee, shin_turn = joint(leg.shin)
-  local ankle, foot_turn = joint(leg.foot)
-  local _, hips_turn = joint("hips")
-  local a, b = len(sub(knee, hip)), len(sub(ankle, knee))
+local function reach(m, leg, target)
+  local a = m.anim.animator
+  local hip, thigh_turn = joint(leg.thigh, a)
+  local knee, shin_turn = joint(leg.shin, a)
+  local ankle, foot_turn = joint(leg.foot, a)
+  local _, hips_turn = joint("hips", a)
+  local la, lb = len(sub(knee, hip)), len(sub(ankle, knee))
   local to = sub(target, hip)
-  local d = math.min(math.max(len(to), math.abs(a - b) + 1e-3), a + b - 1e-3)
+  local d = math.min(math.max(len(to), math.abs(la - lb) + 1e-3), la + lb - 1e-3)
   local dir = unit(to)
   -- Which way the knee bends: the animation's knee, plus a steady pull toward the way the body faces, so a nearly
   -- straight leg (whose own bend direction is tiny) can't flip its knee from one frame to the next.
   local function across(p) return sub(p, mul(dir, dot(p, dir))) end
   local forward = rot(qmul(hips_turn, qinv(rest.hips)), v(0, 0, 1))
   local bend = unit(add(across(sub(knee, hip)), mul(unit(across(forward)), 0.08)))
-  local c = math.max(-1, math.min(1, (a * a + d * d - b * b) / (2 * a * d)))
-  local new_knee = add(add(hip, mul(dir, a * c)), mul(bend, a * math.sqrt(1 - c * c)))
+  local c = math.max(-1, math.min(1, (la * la + d * d - lb * lb) / (2 * la * d)))
+  local new_knee = add(add(hip, mul(dir, la * c)), mul(bend, la * math.sqrt(1 - c * c)))
   local new_ankle = add(hip, mul(dir, d))
   local turn_thigh = from_to(sub(knee, hip), sub(new_knee, hip))
   local new_thigh = qmul(turn_thigh, thigh_turn)
   local new_shin = qmul(from_to(rot(turn_thigh, sub(ankle, knee)), sub(new_ankle, new_knee)), qmul(turn_thigh, shin_turn))
-  set_turn(leg.thigh, hips_turn, new_thigh, anim.animator)
-  set_turn(leg.shin, new_thigh, new_shin, anim.animator)
-  set_turn(leg.foot, new_shin, foot_turn, anim.animator)
+  set_turn(leg.thigh, hips_turn, new_thigh, a)
+  set_turn(leg.shin, new_thigh, new_shin, a)
+  set_turn(leg.foot, new_shin, foot_turn, a)
 end
 
 -- Planted feet stay put while the body moves; one at a time, a foot left too far behind steps.
-local function feet(dt)
-  for i, leg in ipairs(legs) do
-    local wanted = to_world((joint(leg.foot)))
-    wanted[2] = wanted[2] - body.y            -- the animation's own ankle height off the ground: crouching bends the knees
-    local other = legs[3 - i]
+local function feet(m, dt)
+  for i, leg in ipairs(m.legs) do
+    local wanted = to_world(m, (joint(leg.foot, m.anim.animator)))
+    wanted[2] = wanted[2] - m.body.y          -- the animation's own ankle height off the ground: crouching bends the knees
+    local other = m.legs[3 - i]
     leg.plant = leg.plant or wanted
     local target
     if wanted[2] - leg.rest > LIFTED then                         -- the animation's own step: follow it
@@ -312,7 +346,7 @@ local function feet(dt)
     else
       if not leg.step and not other.step and
          math.sqrt((wanted[1] - leg.plant[1]) ^ 2 + (wanted[3] - leg.plant[3]) ^ 2) > STEP_LENGTH then
-        leg.step = { from = leg.plant, to = v(wanted[1] + body.vx * 0.12, wanted[2], wanted[3] + body.vz * 0.12), t = 0 }
+        leg.step = { from = leg.plant, to = v(wanted[1] + m.body.vx * 0.12, wanted[2], wanted[3] + m.body.vz * 0.12), t = 0 }
       end
       if leg.step then
         leg.step.t = math.min(1, leg.step.t + dt / STEP_TIME)
@@ -326,28 +360,49 @@ local function feet(dt)
     end
     -- Eased, so a foot never jumps when it changes between planted, stepping and following the animation.
     leg.at = leg.at and add(leg.at, mul(sub(target, leg.at), 1 - math.exp(-30 * dt))) or target
-    reach(leg, to_model(leg.at))
+    reach(m, leg, to_model(m, leg.at))
   end
 end
 
--- A little burst where bat and ball meet.
 -- Where the top of a bat's blade is in the world, for the ball to rest on.
-local function on_bat(side)
-  local b = to_world(blade_in_model(side, anim.animator))
+local function on_bat(m, side)
+  local b = to_world(m, blade_in_model(side, m.anim.animator))
   return v(b[1], b[2] + R + 0.012, b[3])
 end
 
+-- A little burst where bat and ball meet.
 local function spark(x, y, z) effects[#effects + 1] = { x = x, y = y, z = z, t = 0 } end
 
--- The mannequin, each frame after the animation: mirror if the move is mirrored, feet, then where its bat is.
-local function pose_opponent(dt)
-  if #moves == 0 then return end
-  if body.move.mirrored then mirror_pose(anim.animator) end
-  blend_pose(dt)
-  body.turn = toward(body.turn, body.move.turn, 1 - math.exp(-12 * dt))
-  feet(dt)
-  body.blade = to_world(blade_in_model(body.move.hand, anim.animator))
+-- A mannequin each frame: its animation, mirrored if the move is, blended, turned, feet, then where its bat is.
+local function pose(m, dt)
+  m.anim:update(dt)
+  if m.body.move.mirrored then mirror_pose(m.anim.animator) end
+  blend_pose(m, dt)
+  m.body.turn = toward(m.body.turn, facing(m, m.body.move), 1 - math.exp(-12 * dt))
+  feet(m, dt)
+  m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
 end
+
+-- Its body heads for its spot.
+local function walk(m, dt)
+  local b = m.body
+  local nx, nz = lib.approach(b.x, b.tx, WALK, dt), lib.approach(b.z, b.tz, WALK, dt)
+  b.vx, b.vz = (nx - b.x) / dt, (nz - b.z) / dt
+  b.x, b.z = nx, nz
+  b.y = lib.approach(b.y, b.ty, WALK, dt)
+end
+
+local function draw_mannequin(m)
+  local q = m.body.turn
+  model.draw(dummy, m.body.x, m.body.y, m.body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, m.anim.animator)
+  for _, hand in pairs(hands) do
+    local wrist, turn = joint(hand.bone, m.anim.animator)
+    local at, t = to_world(m, wrist), qmul(qmul(q, turn), hand.offset)
+    model.draw(bat_model, at[1], at[2], at[3], t[1], t[2], t[3], t[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
+  end
+end
+
+-- ---------------------------------------------------------------- words, camera
 
 local function side_of(z) return z > 0 and "player" or "cpu" end
 local function other(who) return who == "player" and "cpu" or "player" end
@@ -364,7 +419,7 @@ local function words(s)
 end
 
 local function camera()
-  gfx.camera(0, 3.0, 4.4, 0, 0.5, -0.8, 60)   -- portrait (game.cfg): far and high enough to see the whole table
+  gfx.camera(0, 4.0, 6.0, 0, 0.6, -0.2, 50)   -- portrait (game.cfg): behind and above you, the whole table in view
 end
 
 -- ---------------------------------------------------------------- shots
@@ -390,21 +445,23 @@ local function hit(by, vx, vy, vz)
   if by == "player" then input.haptic("light") end
 end
 
+-- Your shot, aimed by the line you drew: it goes the way the line went across, longer lines go deeper and faster.
 local function player_hit()
-  local speed = math.sqrt(me.vx * me.vx + me.vy * me.vy)
-  local power = lib.clamp(speed / 2.5, 0, 1)
-  -- Where the ball meets the paddle angles the shot; the paddle's sideways swing adds to it.
-  local tx = lib.clamp(ball.x + (ball.x - me.x) * 2.5 + me.vx * 0.15, -HALF_W + 0.1, HALF_W - 0.1)
-  local tz = -(0.45 + 0.75 * power)
-  hit("player", shot(ball.x, ball.y, ball.z, tx, tz, 0.72 - 0.32 * power))
-  if power > 0.8 then say("SMASH!") end
+  local line = you.aim or { right = 0, up = 0, length = 200 }
+  local power = lib.clamp(line.length / 380, 0.25, 1)
+  local tx = lib.clamp(line.right * 0.65, -(HALF_W - 0.1), HALF_W - 0.1)
+  local tz = -(0.45 + 0.8 * power)
+  hit("player", shot(ball.x, ball.y, ball.z, tx, tz, 0.85 - 0.35 * power))
+  you.armed, you.body.ty = false, 0
+  if power > 0.85 and line.up < -0.3 then say("SMASH!") end
 end
 
--- The computer is a polite robot that can't lose: every return (and serve) is a gentle ball landing mid-table on
--- your half, on your paddle's side, never fast and never out.
+-- The robot is polite and can't lose: every return (and serve) is a gentle ball landing mid-table on your half,
+-- on your side of it, never fast and never out.
 local function cpu_hit()
-  local tx = lib.clamp(me.x * 0.6 + (math.random() - 0.5) * 0.2, -(HALF_W - 0.25), HALF_W - 0.25)
+  local tx = lib.clamp(you.body.x * 0.6 + (math.random() - 0.5) * 0.2, -(HALF_W - 0.25), HALF_W - 0.25)
   hit("cpu", shot(ball.x, ball.y, ball.z, tx, 0.7 + math.random() * 0.2, 0.8))
+  robot.armed, robot.body.ty = false, 0
 end
 
 -- ---------------------------------------------------------------- points and serving
@@ -433,6 +490,7 @@ end
 local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
+  you.armed, robot.armed, you.pending = false, false, nil
   trail = {}
 end
 
@@ -444,25 +502,11 @@ end
 
 function init()
   learn_moves()
+  robot, you = new_mannequin("cpu"), new_mannequin("player")
   new_game()
 end
 
 -- ---------------------------------------------------------------- the ball
-
--- Where the ball will cross the plane z = plane, following its flight and table bounces. nil if it won't.
-local function predict(plane)
-  local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
-  local dt = 1 / 120
-  for step = 1, 360 do
-    vy = vy - G * dt
-    local nz = z + vz * dt
-    if (z - plane) * (nz - plane) <= 0 then return x, y, step * dt end
-    x, y, z = x + vx * dt, y + vy * dt, nz
-    if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
-      y, vy = TABLE_Y + R, -vy * BOUNCE
-    end
-  end
-end
 
 local function step_ball(dt)
   local px, py, pz = ball.x, ball.y, ball.z
@@ -486,8 +530,8 @@ local function step_ball(dt)
         award(other(last), "it bounced on the hitter's own side")
       else
         bounces[side] = bounces[side] + 1
-        if bounces[side] >= 2 and side == "cpu" and #moves > 0 then
-          spark(ball.x, ball.y, ball.z) cpu_hit()    -- it can't lose: a short ball is still returned
+        if bounces[side] >= 2 and side == "cpu" then
+          spark(ball.x, ball.y, ball.z) cpu_hit()    -- the robot can't lose: a short ball is still returned
         elseif bounces[side] >= 2 then award(last, "two bounces") end
       end
     end
@@ -501,83 +545,120 @@ local function step_ball(dt)
     end
   end
 
-  -- The mannequin's serve: the tossed ball is hit when it meets the bat on the way down; dropped, it tries again.
+  local function touching(m) return len(sub(v(ball.x, ball.y, ball.z), m.body.blade)) <= HIT_RANGE end
+
+  -- Serves: the tossed ball is hit when it meets the server's bat on the way down; dropped, it's served again.
   if state == "toss" then
-    if ball.vy < 0 and len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE then
+    local m = server == "cpu" and robot or you
+    if ball.vy < 0 and touching(m) then
       spark(ball.x, ball.y, ball.z)
-      cpu_hit()
-      body.ty = 0
-      body.serve_hand = body.serve_hand == "R" and "L" or "R"   -- next serve with the other hand
+      if m == robot then
+        cpu_hit()
+        robot.serve_hand = robot.serve_hand == "R" and "L" or "R"   -- next serve with the other hand
+      else
+        player_hit()
+      end
     elseif ball.y - R <= 0.02 then
       start_serve()
     end
   end
 
-  -- The paddles. A paddle only plays a ball that has bounced once on its own side.
+  -- Returns: a bat only plays a ball that has bounced once on its own side.
   if state == "rally" then
-    if last == "cpu" and bounces.player == 1 and pz < PADDLE_Z and ball.z >= PADDLE_Z then
-      local dx, dy = ball.x - me.x, ball.y - me.y
-      if dx * dx + dy * dy <= REACH * REACH then ball.z = PADDLE_Z - 0.01 spark(ball.x, ball.y, ball.z) player_hit() end
-    elseif last == "player" and bounces.cpu == 1 and #moves > 0 then
-      -- The mannequin returns it only if its bat really touches it.
-      -- Its bat should meet the ball; if the swing ever misses, it still returns it before it reaches the floor.
-      local rescue = ball.vy < 0 and ball.y < 0.35
-      if len(sub(v(ball.x, ball.y, ball.z), body.blade)) <= HIT_RANGE or rescue then
-        spark(ball.x, ball.y, ball.z) cpu_hit() body.ty = 0
-      end
-    elseif last == "player" and bounces.cpu == 1 and pz > AI_Z and ball.z <= AI_Z then
-      local dx, dy = ball.x - cpu.x, ball.y - cpu.y
-      if dx * dx + dy * dy <= AI_REACH * AI_REACH then ball.z = AI_Z + 0.01 cpu_hit() end
+    if last == "cpu" and bounces.player == 1 and you.armed and touching(you) then
+      spark(ball.x, ball.y, ball.z) player_hit()
+    elseif last == "player" and bounces.cpu == 1 then
+      -- The robot's bat should meet the ball; if its swing ever misses, it still returns it before the floor.
+      if touching(robot) or (ball.vy < 0 and ball.y < 0.35) then spark(ball.x, ball.y, ball.z) cpu_hit() end
     end
+  end
+end
+
+-- ---------------------------------------------------------------- your fingers
+
+-- Left half: a drag walks your mannequin by however far the finger moves (start anywhere: it's a trackpad).
+-- Right half: a drawn line is a swing. WASD walks on the PC too.
+local MOVE_SCALE = 0.006             -- metres the body moves for each unit the finger moves
+local drags, lines, drawn = {}, {}, {}   -- fingers walking, lines being drawn, finished lines fading out
+
+local function swing_from(line)
+  if state == "serve" and server == "player" then
+    -- Your serve: the line flicks the ball up off your bat, then the swing it picks hits it on the way down.
+    state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
+    ball.vx, ball.vy, ball.vz = 0, TOSS, 0
+    you.aim = line
+    plan_line(you, line, true)
+  elseif state == "rally" then
+    you.aim = line
+    if last == "cpu" then
+      if not plan_line(you, line, false) then you.pending = line end
+    else
+      you.pending = line                      -- drawn early: it's played as soon as the robot has hit
+    end
+  elseif state == "over" then
+    new_game()
+  end
+end
+
+local function fingers(dt)
+  local w, h = gfx.size()
+  for _, t in ipairs(input.touches()) do
+    if t.phase == "down" then
+      if t.x < w / 2 then drags[t.id] = true else lines[t.id] = { { t.x, t.y }, start = sys.real_time() } end
+    elseif t.phase == "move" then
+      if drags[t.id] then
+        you.body.tx = lib.clamp(you.body.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
+        you.body.tz = lib.clamp(you.body.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
+      elseif lines[t.id] then
+        table.insert(lines[t.id], { t.x, t.y })
+      end
+    elseif t.phase == "up" then
+      drags[t.id] = nil
+      local l = lines[t.id]
+      lines[t.id] = nil
+      if l then
+        local first, final = l[1], l[#l]
+        local dx, dy = final[1] - first[1], first[2] - final[2]          -- right and up, in screen units
+        local length = math.sqrt(dx * dx + dy * dy)
+        if length > 30 then
+          swing_from({ right = dx / length, up = dy / length, length = length })
+          drawn[#drawn + 1] = { points = l, t = 0 }
+        elseif state == "over" then
+          new_game()
+        end
+      end
+    end
+  end
+  local step = 1.4 * dt
+  if input.key("a") or input.key("left") then you.body.tx = you.body.tx - step end
+  if input.key("d") or input.key("right") then you.body.tx = you.body.tx + step end
+  if input.key("w") or input.key("up") then you.body.tz = math.max(HALF_L + 0.25, you.body.tz - step) end
+  if input.key("s") or input.key("down") then you.body.tz = math.min(HALF_L + 1.8, you.body.tz + step) end
+  for i = #drawn, 1, -1 do
+    drawn[i].t = drawn[i].t + dt
+    if drawn[i].t > 0.5 then table.remove(drawn, i) end
   end
 end
 
 -- ---------------------------------------------------------------- each frame
 
 function fixed_update(dt)
-  -- Your paddle: towards where you point, drawn a little towards the incoming ball.
-  local tx, ty = me.tx, me.ty
-  if state == "rally" and last == "cpu" and ball.vz > 0 and ball.z > 0 then
-    local bx, by = predict(PADDLE_Z)
-    if bx then tx, ty = lib.lerp(tx, bx, ASSIST), lib.lerp(ty, by, ASSIST) end
+  -- The robot plans as soon as you hit; your line drawn early is played as soon as the robot hits.
+  if state == "rally" and last == "player" and robot.body.plan_for ~= bounces then
+    robot.body.plan_for = bounces
+    plan_robot(robot)
   end
-  local nx, ny = lib.approach(me.x, tx, 22, dt), lib.approach(me.y, ty, 22, dt)
-  me.vx, me.vy = lib.lerp(me.vx, (nx - me.x) / dt, 0.5), lib.lerp(me.vy, (ny - me.y) / dt, 0.5)
-  me.x, me.y = nx, ny
-
-  -- The computer: heads for where the ball will cross its plane, no faster than AI_SPEED.
-  local gx, gy = 0, TABLE_Y + 0.25
-  if state == "rally" and last == "player" and ball.vz < 0 and ball.z < 0 then   -- it reads the ball once it crosses the net
-    local bx, by = predict(AI_Z)
-    if bx then gx, gy = bx, by end
-  elseif state == "serve" and server == "cpu" then
-    gx, gy = 0.2, TABLE_Y + 0.22
+  if state == "rally" and last == "cpu" and you.pending then
+    if plan_line(you, you.pending, false) then you.pending = nil end
   end
-  -- The mannequin: as soon as you hit, it plans the return and heads for its spot.
-  if state == "rally" and last == "player" and body.plan_for ~= bounces and #moves > 0 then
-    body.plan_for = bounces   -- one plan per ball you hit
-    plan()
-  end
-  local nx, nz = lib.approach(body.x, body.tx, WALK, dt), lib.approach(body.z, body.tz, WALK, dt)
-  body.vx, body.vz = (nx - body.x) / dt, (nz - body.z) / dt
-  body.x, body.z = nx, nz
-  body.y = lib.approach(body.y, body.ty, WALK, dt)
-
-  local dx, dy = gx - cpu.x, gy - cpu.y
-  local far = math.sqrt(dx * dx + dy * dy)
-  local reach = AI_SPEED * dt
-  if far > reach then dx, dy = dx / far * reach, dy / far * reach end
-  cpu.x, cpu.y = cpu.x + dx, cpu.y + dy
+  walk(robot, dt)
+  walk(you, dt)
 
   if state == "serve" then
-    -- The server holds the ball just in front of their paddle.
-    local p, toward = server == "player" and me or cpu, server == "player" and -1 or 1
-    ball.x, ball.y = p.x + 0.04, p.y + 0.14 + math.sin(sys.real_time() * 4) * 0.02
-    ball.z = (server == "player" and PADDLE_Z or AI_Z) + toward * 0.06
-    if server == "cpu" and #moves > 0 then   -- balanced on top of the mannequin's serving bat
-      local p = on_bat(body.serve_hand)
-      ball.x, ball.y, ball.z = p[1], p[2], p[3]
-    end
+    -- The server's ball rests on top of their bat.
+    local m = server == "cpu" and robot or you
+    local p = on_bat(m, m.serve_hand)
+    ball.x, ball.y, ball.z = p[1], p[2], p[3]
   else
     for _ = 1, 2 do step_ball(dt / 2) end                -- half steps, so a fast ball can't skip the net
   end
@@ -585,49 +666,22 @@ end
 
 function update(dt)
   lib.update(dt)
-  anim:update(dt)
-  pose_opponent(dt)
+  pose(robot, dt)
+  pose(you, dt)
   for i = #effects, 1, -1 do
     effects[i].t = effects[i].t + dt
     if effects[i].t > 0.3 then table.remove(effects, i) end
   end
-  camera()   -- so gfx.unproject below uses this camera
-
-  -- Pointing: hold the mouse button (or a finger) and move. The paddle follows the point on its plane.
-  local pressed = false
-  for _, t in ipairs(input.touches()) do
-    if t.phase == "down" then pressed = true end
-    local ox, oy, oz, rx, ry, rz = gfx.unproject(t.x, t.y)
-    if rz < -1e-4 then
-      local s = (PADDLE_Z - oz) / rz
-      me.tx, me.ty = ox + rx * s, oy + ry * s
-    end
-  end
-  local speed = 1.8 * dt
-  if input.key("a") or input.key("left") then me.tx = me.tx - speed end
-  if input.key("d") or input.key("right") then me.tx = me.tx + speed end
-  if input.key("w") or input.key("up") then me.ty = me.ty + speed end
-  if input.key("s") or input.key("down") then me.ty = me.ty - speed end
-  me.tx, me.ty = lib.clamp(me.tx, -1.3, 1.3), lib.clamp(me.ty, TABLE_Y + 0.02, TABLE_Y + 0.9)
-  local key = input.key("space")
-  pressed = pressed or (key and not key_was_down)
-  key_was_down = key
+  fingers(dt)
 
   timer = timer - dt
-  if state == "serve" and server == "player" and pressed then
-    local tx = lib.clamp(-me.x * 0.6 + (math.random() - 0.5) * 0.6, -0.6, 0.6)
-    hit("player", shot(ball.x, ball.y, ball.z, tx, -0.75 - math.random() * 0.4, 0.7))
-  elseif state == "serve" and server == "cpu" and timer <= 0 and #moves > 0 then
-    -- The flick: the ball hops up off the bat, and the swing is planned onto it as it falls.
+  if state == "serve" and server == "cpu" and timer <= 0 then
+    -- The robot's flick: the ball hops up off the bat, and the swing is planned onto it as it falls.
     state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
     ball.vx, ball.vy, ball.vz = 0, TOSS, 0
-    plan(body.serve_hand)
-  elseif state == "serve" and server == "cpu" and timer <= 0 then
-    hit("cpu", shot(ball.x, ball.y, ball.z, (math.random() * 2 - 1) * 0.55, 0.6 + math.random() * 0.6, 0.7))
+    plan_robot(robot, robot.serve_hand)
   elseif state == "point" and timer <= 0 then
     start_serve()
-  elseif state == "over" and pressed then
-    new_game()
   end
 
   -- The trail: the ball's position every TRAIL_STEP seconds (none while it is held for a serve).
@@ -642,18 +696,13 @@ end
 
 -- ---------------------------------------------------------------- drawing
 
-local function paddle(x, y, z, r, g, b, a)
-  gfx.cube(x, y - 0.13, z, 0.03, 0.1, 0.02, 0.35, 0.22, 0.14, 0, a)                              -- handle
-  gfx.draw(gfx.SPHERE, x, y, z, 0, 0, 0, 1, 0.17, 0.17, 0.025, r, g, b, a)                      -- blade
-end
-
 function draw()
   gfx.clear(0.05, 0.03, 0.11)
   camera()
   gfx.fog(0.05, 0.03, 0.11, 5, 13)
   gfx.light(-0.35, -1, -0.25, 1.0, 0.95, 0.9)
   gfx.ambient(0.34, 0.31, 0.46)
-  gfx.shadows(0, TABLE_Y, 0, 2.3, 0.65)
+  gfx.shadows(0, TABLE_Y, 0.4, 3.0, 0.65)
   gfx.point_light(0, 2.2, 0, 4.5, 0.55, 0.35, 0.9)
 
   -- Floor, table, lines, legs.
@@ -673,25 +722,13 @@ function draw()
   gfx.blend("alpha")
   gfx.cube(0, TABLE_Y + 0.07, 0, (HALF_W + 0.15) * 2, 0.14, 0.004, 0.75, 0.8, 1, 0, 0.35)
 
-  -- The mannequin with a taped bat in each hand.
+  -- The two mannequins, a taped bat in each hand.
   gfx.blend("opaque")
-  if #moves > 0 then
-    local q = body.turn
-    model.draw(dummy, body.x, body.y, body.z, q[1], q[2], q[3], q[4], 1, 1, 1, 1, 1, 1, 1, anim.animator)
-    for _, hand in pairs(hands) do
-      local wrist, turn = joint(hand.bone)
-      local at, t = to_world(wrist), qmul(qmul(q, turn), hand.offset)
-      model.draw(bat_model, at[1], at[2], at[3], t[1], t[2], t[3], t[4], 1, 1, 1, 1, 1, 1, 1, nil, hand.node)
-    end
-  end
-  gfx.blend("alpha")
-  -- Paddles: the computer's in blue, yours in red and slightly see-through so it never hides the ball.
-  if #moves == 0 then paddle(cpu.x, cpu.y, AI_Z, 0.2, 0.45, 1.0, 1) end   -- no mannequin clips: the old blue paddle
-  paddle(me.x, me.y, PADDLE_Z, 1.0, 0.25, 0.3, 0.8)
-  gfx.blend("opaque")
+  draw_mannequin(robot)
+  draw_mannequin(you)
 
   -- The ball: a real lit ball, its shadow straight below it on the table or the floor (always, so you can read
-  -- where it is), the bursts where bat meets ball, and a fading trail.
+  -- where it is), and the bursts where bat meets ball.
   gfx.sphere(ball.x, ball.y, ball.z, R * 2, 1.0, 0.93, 0.8)
   local over = math.abs(ball.x) <= HALF_W and math.abs(ball.z) <= HALF_L and ball.y >= TABLE_Y
   local floor = over and TABLE_Y + 0.003 or 0.003
@@ -728,10 +765,22 @@ function draw()
   gfx.blend("opaque")
   gfx.shader()
 
+  -- Your lines: the one being drawn, and finished ones fading out.
+  local w, h = gfx.size()
+  local function dots(l, alpha)
+    for i = 2, #l do
+      local a, b = l[i - 1], l[i]
+      local n = math.max(1, math.floor(math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) / 6))
+      for k = 0, n - 1 do gfx.circle(a[1] + (b[1] - a[1]) * k / n, a[2] + (b[2] - a[2]) * k / n, 6, 1, 0.75, 0.9, alpha) end
+    end
+  end
+  for _, l in pairs(lines) do dots(l, 0.9) end
+  for _, d in ipairs(drawn) do dots(d.points, 0.9 * (1 - d.t / 0.5)) end
+  gfx.rect(w / 2 - 1, h * 0.55, 2, h * 0.3, 1, 1, 1, 0.08)   -- where walking ends and swinging begins
+
   -- Score and messages, in your dot font.
   gfx.font(font)
-  local w, h = gfx.size()
-  local left, top, right = gfx.safe()
+  local left, top, right, bottom = gfx.safe()
   gfx.text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)
   local board = words(string.format("YOU %d  -  %d CPU", score.player, score.cpu))
   gfx.text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
@@ -740,11 +789,13 @@ function draw()
   if wins > 0 then gfx.text(words("WINS " .. wins), left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
 
   local center = nil
-  if state == "serve" and server == "player" then center = "CLICK OR SPACE TO SERVE" end
-  if state == "over" then center = message .. "   CLICK TO PLAY AGAIN" end
+  if state == "serve" and server == "player" then center = "DRAW A LINE TO SERVE" end
+  if state == "over" then center = message .. "   TAP TO PLAY AGAIN" end
   if center then center = words(center) gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
     gfx.text(words(message), (w - gfx.text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
-  gfx.text(words("HOLD THE MOUSE AND MOVE   -   WASD"), left + 80, h - 60, 16, 0.55, 0.55, 0.7)
+  local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
+  gfx.text(walk_hint, w * 0.25 - gfx.text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  gfx.text(swing_hint, w * 0.75 - gfx.text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
 end
