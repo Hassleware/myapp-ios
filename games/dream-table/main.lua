@@ -354,7 +354,7 @@ local function other(who) return who == "player" and "cpu" or "player" end
 local function say(text) message, message_time = text, sys.real_time() end
 
 local function camera()
-  gfx.camera(0, 1.5, 2.85, 0, 0.72, -0.35, 52)
+  gfx.camera(0, 3.0, 4.4, 0, 0.5, -0.8, 60)   -- portrait (game.cfg): far and high enough to see the whole table
 end
 
 -- ---------------------------------------------------------------- shots
@@ -732,9 +732,9 @@ function draw()
   local center = nil
   if state == "serve" and server == "player" then center = "CLICK OR SPACE TO SERVE" end
   if state == "over" then center = message .. "   CLICK TO PLAY AGAIN" end
-  if center then gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.42, 26, 1, 1, 1) end
+  if center then gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
-    gfx.text(message, (w - gfx.text_width(message, 30)) / 2, h * 0.3, 30, 1, 0.85, 0.55)
+    gfx.text(message, (w - gfx.text_width(message, 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
   gfx.text("HOLD THE MOUSE AND MOVE   -   WASD", left + 80, h - 60, 16, 0.55, 0.55, 0.7)
 end
