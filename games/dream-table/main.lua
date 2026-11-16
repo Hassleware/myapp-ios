@@ -3,7 +3,8 @@
 -- movement, wherever you start (a trackpad, not a joystick). Draw a line on the right half to swing: the line's
 -- direction picks the stroke from the recorded shots (the way the bat travelled when it was recorded), and its
 -- direction and length aim the ball and set its pace. Draw it any time before the ball arrives; the mannequin
--- times the swing and steps to meet the ball. A quick flick up on the left half jumps.
+-- times the swing and steps to meet the ball. On the left half, let go while the finger is still moving fast and
+-- it's a jump that way (up: toward the table; up-left, up-right; mostly sideways: a dive), harder flicks further.
 -- Your serve, as in real table tennis: the first line tosses the ball up off your bat; the second is the swing, and
 -- you time it: the bat meets the ball where it will be SWING_LEAD seconds after you finish drawing. The serve must
 -- bounce on your side, then on the other. Miss it and it's the robot's point.
@@ -66,6 +67,9 @@ local TOP_SPEED = 2.2                -- metres a second: the body can't outrun i
 local CARIOCA_SPEED = 0.6            -- moving sideways faster than this, the trailing foot crosses over (carioca)
 local CROSS_PAST, CROSS_DEPTH = 0.08, 0.09   -- how far past the leading foot it lands, and in front of or behind it
 local JUMP_SPEED, GRAVITY = 3.2, 9.8 -- a jump leaves the ground this fast (about half a metre high)
+local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
+local JUMP_REACH, DIVE_REACH = 2.2, 3.4   -- metres a second across the floor for a jump and for a dive
+local DIVE_LEAN = math.rad(55)       -- how far a dive tips the body over toward where it's going
 local SWING_LEAD = 0.32              -- your serve swing meets the ball this long after you finish the line
 local LIFTED = 0.07                  -- an ankle the animation raises this far above the other is its own step: leave it
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
@@ -214,7 +218,7 @@ local function new_mannequin(side)
               blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
               face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
   local z = m.sign * (HALF_L + 0.6)
-  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
              blade = v(0, 1, z) }
   for _, s in ipairs({ "L", "R" }) do
     local ankle = joint("foot." .. s, 0)
@@ -425,7 +429,12 @@ local function pose(m, dt)
   m.anim:update(dt)
   if m.body.move.mirrored then mirror_pose(m.anim.animator) end
   blend_pose(m, dt)
-  m.body.turn = toward(m.body.turn, facing(m, m.body.move), 1 - math.exp(-12 * dt))
+  local b = m.body
+  b.base = toward(b.base, facing(m, b.move), 1 - math.exp(-12 * dt))
+  b.roll = lib.approach(b.roll, b.air > 0 and b.lean or 0, b.air > 0 and 10 or 5, dt)   -- tip over in the air, get up after
+  local ahead = rot(b.base, v(0, 0, 1))
+  local half = b.roll / 2
+  b.turn = qmul({ ahead[1] * math.sin(half), ahead[2] * math.sin(half), ahead[3] * math.sin(half), math.cos(half) }, b.base)
   feet(m, dt)
   m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
 end
@@ -440,10 +449,13 @@ local function walk(m, dt)
   b.vx, b.vz = vx, vz
   b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
-  if b.air > 0 or b.jv > 0 then                       -- a jump: up, then down under gravity
+  if b.air > 0 or b.jv > 0 then                       -- a jump: up, then down under gravity, carried the way it went
     b.jv = b.jv - GRAVITY * dt
     b.air = b.air + b.jv * dt
-    if b.air <= 0 then b.air, b.jv = 0, 0 end
+    b.x = lib.clamp(b.x + b.jx * dt, -1.8, 1.8)
+    b.z = m.sign * lib.clamp(m.sign * (b.z + b.jz * dt), HALF_L + 0.25, HALF_L + 1.8)
+    b.tx, b.tz, b.vx, b.vz = b.x, b.z, b.jx, b.jz
+    if b.air <= 0 then b.air, b.jv, b.jx, b.jz, b.lean = 0, 0, 0, 0, 0 end
   end
 end
 
@@ -700,6 +712,22 @@ local function swing_now(line)
   end)
 end
 
+-- A jump from a flick: dir is the finger's direction on screen (right, up), power 0.5 to 1. Up goes toward the
+-- table; mostly sideways is a dive: lower, longer, tipping the body over toward where it's going.
+local function jump(right, up, power)
+  local b = you.body
+  if b.air > 0 then return end
+  local dive = math.abs(right) > 0.75
+  local reach = (dive and DIVE_REACH or JUMP_REACH) * power
+  b.jx, b.jz = right * reach, -math.max(up, 0) * reach * 0.6      -- screen up is toward the table (-z for you)
+  b.jv, b.air = dive and 2.0 or JUMP_SPEED * power, 0.001
+  -- Tip toward the way it's going: about the way the body faces.
+  local ahead = rot(b.base, v(0, 0, 1))
+  local side = cross(ahead, v(0, 1, 0))
+  local toward_side = side[1] * b.jx + side[3] * b.jz
+  b.lean = (dive and DIVE_LEAN or math.rad(12) * math.abs(right)) * (toward_side >= 0 and 1 or -1)
+end
+
 local function swing_from(line)
   if state == "serve" and server == "player" then
     -- Your serve, first line: the toss. The ball pops up off your bat.
@@ -725,24 +753,31 @@ local function fingers(dt)
   for _, t in ipairs(input.touches()) do
     if t.phase == "down" then
       if t.x < w / 2 then
-        drags[t.id] = { x = t.x, y = t.y, start = sys.real_time(), tx = you.body.tx, tz = you.body.tz }
+        drags[t.id] = { { sys.real_time(), t.x, t.y } }
       else
         lines[t.id] = { { t.x, t.y }, start = sys.real_time() }
       end
     elseif t.phase == "move" then
       if drags[t.id] then
+        local d = drags[t.id]
+        d[#d + 1] = { sys.real_time(), t.x, t.y }
+        while #d > 2 and sys.real_time() - d[1][1] > 0.1 do table.remove(d, 1) end   -- the last tenth of a second
         you.body.tx = lib.clamp(you.body.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
         you.body.tz = lib.clamp(you.body.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
       elseif lines[t.id] then
         table.insert(lines[t.id], { t.x, t.y })
       end
     elseif t.phase == "up" then
-      -- A quick flick up on the left half is a jump, not a walk: the walk it started is taken back.
+      -- Let go while the finger is still moving fast (and not downward): a jump that way. Otherwise just a walk.
       local d = drags[t.id]
-      if d and sys.real_time() - d.start < 0.3 and d.y - t.y > 60 and d.y - t.y > 2 * math.abs(t.x - d.x)
-         and you.body.air == 0 then
-        you.body.tx, you.body.tz = d.tx, d.tz
-        you.body.jv, you.body.air = JUMP_SPEED, 0.001
+      if d and #d >= 2 then
+        local a = d[1]
+        local span = math.max(sys.real_time() - a[1], 1e-3)
+        local vx, vy = (t.x - a[2]) / span, (a[3] - t.y) / span     -- right and up, units a second
+        local speed = math.sqrt(vx * vx + vy * vy)
+        if speed > FLICK_SPEED and vy > -0.35 * speed then
+          jump(vx / speed, vy / speed, lib.clamp(speed / 2000, 0.5, 1))
+        end
       end
       drags[t.id] = nil
       local l = lines[t.id]
