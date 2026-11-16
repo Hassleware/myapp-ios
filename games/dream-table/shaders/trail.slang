@@ -5,6 +5,7 @@
 // points, newest first: frame.user[0..3].xyz (gfx.frame_param) and push.params[0..1].xyz (gfx.param).
 // frame.user[0].w is the width at the ball. The vertex shader runs a Catmull-Rom curve through the points, so the
 // ribbon is smooth even with only six of them, turns it to face the camera, and narrows it toward the tail.
+// It starts as a point inside the ball and widens, so its head is never a flat square.
 // The fragment shader fades it toward the tail and toward its edges, with a white-hot core near the ball.
 // Drawn with gfx.blend("add"), so it glows and needs no sorting.
 
@@ -43,7 +44,9 @@ VSOut vsMain(VSIn input)
     float3 across = cross(along, toCamera);
     float l = length(across);
     across = l > 1e-6 ? across / l : float3(0.0, 1.0, 0.0);   // a ball standing still: no trail to speak of
-    float width = frame.user[0].w * (1.0 - 0.85 * t);
+    // Starts as a point inside the ball and widens, so its end never shows as a flat square card round the ball;
+    // then narrows toward the tail.
+    float width = frame.user[0].w * smoothstep(0.0, 0.15, t) * (1.0 - 0.85 * t);
 
     VSOut o;
     o.world = centre + across * side * width;
@@ -60,7 +63,7 @@ float4 fsMain(VSOut input) : SV_Target
 {
     float t = input.uv.x;
     float edge = 1.0 - input.uv.y * input.uv.y;              // 1 along the middle, 0 at the edges
-    float fade = pow(1.0 - t, 1.6);                          // strong at the ball, gone at the tail
+    float fade = pow(1.0 - t, 1.6) * smoothstep(0.0, 0.12, t);   // fades in just behind the ball, out at the tail
     float core = edge * edge * (1.0 - t);
     float3 color = lerp(input.color.rgb, float3(1.0, 1.0, 1.0), core * 0.6);
     return float4(color, input.color.a * fade * edge);       // add blending multiplies by alpha
