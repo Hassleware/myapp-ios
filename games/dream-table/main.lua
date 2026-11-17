@@ -129,7 +129,8 @@ local COURT_BACK = HALF_L + 1.8        -- and how far back from the net (as for 
 local COURT_X = 2.2                  -- how far either side a body may go (metres): room to dash for wide balls
 local JUMP_COST, DASH_COST = 0.35, 0.25   -- planning: how much a swing that needs a jump or a dash is avoided
 local SKY_CHANCE, WIDE_CHANCE = 0.25, 0.25   -- the robot's fantasy returns: a sky ball (jump!) or a wide ball (dash!)
-local WIDE_KICK = 5.5                -- a wide ball's sideways kick off its bounce (m/s): spin, in a dream
+local WIDE_CURVE, WIDE_KICK = 4.0, 1.0   -- a wide ball's sidespin: it curves sideways this hard all the way (m/s^2),
+                                         -- and kicks a little more off its bounce (m/s)
 local LEAN_PER_SPEED, LEAN_MOST = math.rad(4), math.rad(30)   -- tilt toward where it's going: per m/s, and at most
 local LEAN_EASE = 10                 -- how quickly the tilt follows (bigger is quicker); it eases back upright
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
@@ -337,6 +338,7 @@ local function flight(m, serving)
   local own, dt, out = serving and 0 or (bounces[m.side] or 0), 1 / 120, {}
   for step = 1, 300 do
     vy = vy - (serving and state == "toss" and SERVE.g or G) * dt   -- a toss floats until it's hit
+    vx = vx + (ball.curve or 0) * dt                                -- a wide ball's sidespin
     x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
     if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
       y, vy, vx, vz = TABLE_Y + R, -vy * BOUNCE, vx * 0.97, vz * 0.97
@@ -994,7 +996,7 @@ end
 
 local function hit(by, vx, vy, vz, serving)
   ball.vx, ball.vy, ball.vz = vx, vy, vz
-  ball.call, ball.kick = nil, nil
+  ball.call, ball.kick, ball.curve = nil, nil, nil
   last, bounces = by, { player = 0, cpu = 0 }
   serve_ball, serve_bounced = serving or false, false
   state = "rally"
@@ -1003,12 +1005,17 @@ local function hit(by, vx, vy, vz, serving)
   FEEL.kick = by == "player" and FEEL.shake or FEEL.shake * 0.4
   sys.time_scale(0)
   if by == "player" then input.haptic("medium") end
-  -- Where the robot's ball will first bounce on your side, played through the ball's own physics.
   FEEL.landing = nil
-  if by == "cpu" and not serving then
-    local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, vx, vy, vz
+end
+
+-- Where the robot's ball will first bounce on your side, played through the ball's own physics (sidespin too).
+local function predict_landing()
+  FEEL.landing = nil
+  do
+    local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
     for _ = 1, 400 do
       vy = vy - G / 120
+      vx = vx + (ball.curve or 0) / 120
       local py = y
       x, y, z = x + vx / 120, y + vy / 120, z + vz / 120
       if y - R <= TABLE_Y and py - R >= TABLE_Y - 0.02 and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
@@ -1049,12 +1056,20 @@ local function cpu_hit(serving)
     ball.call = "jump"
     say("SKY BALL - JUMP!")
   elseif roll < SKY_CHANCE + WIDE_CHANCE then
+    -- A banana shot: aimed in from the side line by as far as the sidespin will carry it, so it bends out
+    -- through the air, lands by the side line away from you, and keeps curving after the bounce.
     local side = you.body.x > 0 and -1 or 1                      -- away from you
-    hit("cpu", shot(ball.x, ball.y, ball.z, side * (HALF_W - 0.1), 0.85, 0.7))
-    ball.kick, ball.call = side * WIDE_KICK, "dash"   -- a call only: any way that reaches it will do
+    local land, T = side * (HALF_W - 0.12), 0.7
+    for _ = 1, 2 do                                              -- shot() may lengthen the flight to clear the net
+      local vx, vy, vz = shot(ball.x, ball.y, ball.z, land - side * 0.5 * WIDE_CURVE * T * T, 0.85, T)
+      T = (0.85 - ball.z) / vz
+    end
+    hit("cpu", shot(ball.x, ball.y, ball.z, land - side * 0.5 * WIDE_CURVE * T * T, 0.85, T))
+    ball.curve, ball.kick, ball.call = side * WIDE_CURVE, side * WIDE_KICK, "dash"   -- a call only: any way that reaches it will do
     say("WIDE BALL - DASH!")
   else hit("cpu", shot(ball.x, ball.y, ball.z, tx, 0.7 + math.random() * 0.2, 0.8)) end
   robot.armed, robot.body.ty, robot.body.goal = false, 0, nil
+  if not serving then predict_landing() end
   start_hint()
 end
 
@@ -1084,7 +1099,7 @@ end
 local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
-  ball.call, ball.kick = nil, nil                       -- a sky or wide ball's call ends with its point
+  ball.call, ball.kick, ball.curve = nil, nil, nil      -- a sky or wide ball's call ends with its point
   FEEL.landing = nil
   hint = nil
   you.armed, robot.armed, you.pending = false, false, nil
@@ -1112,6 +1127,7 @@ end
 local function step_ball(dt)
   local px, py, pz = ball.x, ball.y, ball.z
   ball.vy = ball.vy - (state == "toss" and SERVE.g or G) * dt   -- a tossed ball floats until it's hit
+  ball.vx = ball.vx + (ball.curve or 0) * dt                      -- a wide ball's sidespin
   ball.x, ball.y, ball.z = ball.x + ball.vx * dt, ball.y + ball.vy * dt, ball.z + ball.vz * dt
 
   -- The net: below its top, the ball stops and drops back.
