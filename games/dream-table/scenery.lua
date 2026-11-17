@@ -1,6 +1,6 @@
 -- Dream Table's world, seen from above: a big flat cloud floor with a ring of puffy clouds round its edge, and in
--- the middle an uneven patch of messy cobbles (stones thinning out into the cloud at its edge) where the table
--- stands. Beyond: a deep blue sky, giant beanstalks rising out of the clouds below, clouds on their tops.
+-- the middle an uneven patch of river-pebble cobbles (stones thinning out into the cloud at its edge) where the
+-- table stands. Clouds are drawn with shaders/cloud.slang, the pebbles with shaders/stone.slang. Beyond: a deep blue sky, giant beanstalks rising out of the clouds below, clouds on their tops.
 -- Everything is made here in code at the first draw, with a fixed random seed so it is the same every time.
 
 local lib = include("lib.lua")
@@ -8,10 +8,8 @@ local S = {}
 
 S.FOG = { 0.55, 0.76, 1.0 }                      -- the haze far away, matched to the sky at the horizon
 local PATCH_X, PATCH_Z = 4.6, 7.2                -- the cobble patch's half size (metres); its outline is wobbly
-local PATCH_TEX = 0.025                          -- metres per texel of the cobble texture
-local STONE = 0.2                                -- roughly how big a cobble is (metres)
+local COBBLE_TILE = 1.2                           -- metres per copy of the cobble picture (it repeats)
 local CLOUD_FLOOR_X, CLOUD_FLOOR_Z0, CLOUD_FLOOR_Z1 = 13, -18, 14   -- the flat cloud: half width, far and near end
-local CLOUD_TOP, CLOUD_UNDER = { 1, 1, 1 }, { 0.62, 0.72, 0.92 }    -- clouds are lit from above: white top, blue under
 
 local seed = 1
 local function rnd(a, b)
@@ -54,11 +52,11 @@ end
 -- the horizon, pale below (the cloud sea under the floating cloud).
 local function sky_texture()
   local W, H = 8, 256
-  local DARK, LIGHT, BELOW = { 0.02, 0.07, 0.42 }, { 0.48, 0.76, 1.0 }, { 0.80, 0.90, 1.0 }
+  local DARK, LIGHT, BELOW = { 0.01, 0.05, 0.36 }, { 0.48, 0.76, 1.0 }, { 0.80, 0.90, 1.0 }
   return texture(W, H, function(_, y)
     local up = 1 - (y + 0.5) / H * 2
     if up >= 0 then
-      local t = math.min(1, up / 0.45) ^ 0.75
+      local t = math.min(1, up / 0.12) ^ 0.7
       return LIGHT[1] + (DARK[1] - LIGHT[1]) * t, LIGHT[2] + (DARK[2] - LIGHT[2]) * t, LIGHT[3] + (DARK[3] - LIGHT[3]) * t
     end
     local t = math.min(1, -up * 5)
@@ -75,65 +73,79 @@ local function patch_reach(x, z)
   return math.sqrt((x / PATCH_X) ^ 2 + (z / PATCH_Z) ^ 2) / wobble
 end
 
--- One big picture of the whole patch (not repeating), so every stone is either all there or not at all.
--- Stones sit on a jittered grid; each pixel belongs to its nearest stone. Each stone has its own size, shade
--- and tint; between them is dark grit. Toward the edge stones go missing and the grit fades, so the patch
--- frays into the cloud. Heights (domed stones, low grit) make the normal map.
+-- River-pebble cobbles: rows of smooth oval stones, long side across the path, packed tight with dark gaps.
+-- One repeating picture (COBBLE_TILE metres). Each stone is domed (the normal map) and has its own shade, and
+-- its own number in the alpha channel; the patch mesh fades its vertex alpha toward the edge, and gfx.cutoff
+-- drops a stone once its number times that alpha falls below one half. So toward the edge whole stones go
+-- missing (the fade is slow next to a stone's size), the gaps go first, and the patch frays into the cloud.
 local function cobble_textures()
-  local W, H = math.floor(PATCH_X * 2 / PATCH_TEX), math.floor(PATCH_Z * 2 / PATCH_TEX)
-  local cell = STONE / PATCH_TEX                 -- texels per grid cell
-  local CW, CH = math.ceil(W / cell) + 1, math.ceil(H / cell) + 1
+  local N, ROWS, COLS = 320, 16, 10
+  local CW, CH = N / COLS, N / ROWS              -- 32 x 20 texels a cell: stones about 12 x 7.5 cm
   local stones = {}
-  for cy = 0, CH - 1 do
-    for cx = 0, CW - 1 do
-      local sx, sy = (cx + rnd(0.1, 0.9)) * cell, (cy + rnd(0.1, 0.9)) * cell
-      local reach = patch_reach(sx * PATCH_TEX - PATCH_X, sy * PATCH_TEX - PATCH_Z)
-      local keep = reach < 0.7 or rnd(0, 1) < (1.05 - reach) / 0.35   -- thinning out toward the edge
-      if rnd(0, 1) < 0.03 then keep = false end                         -- the odd stone missing anywhere
-      local shade = rnd(0.68, 1.0)
-      stones[cy * CW + cx + 1] = { sx, sy, keep = keep, gap = rnd(0.06, 0.2), shade = shade,
-                                   r = shade * rnd(0.95, 1.05), g = shade * rnd(0.97, 1.04), b = shade * rnd(0.9, 1.0) }
+  for i = 0, ROWS - 1 do
+    for j = 0, COLS - 1 do
+      local shade = rnd(0.42, 0.72)
+      local warm = rnd(0.0, 0.06)
+      stones[i * COLS + j] = {
+        x = (j + 0.5 + (i % 2) * 0.5 + rnd(-0.2, 0.2)) * CW, y = (i + 0.5 + rnd(-0.18, 0.18)) * CH,
+        a = CW * 0.5 * rnd(0.8, 1.15), b = CH * 0.5 * rnd(0.8, 1.15), turn = rnd(-0.35, 0.35),
+        keep = rnd(0.55, 1.0), r = shade + warm, g = shade + warm * 0.4, b2 = shade - warm * 0.6 }
     end
   end
   local heights, colors = {}, {}
-  for y = 0, H - 1 do
-    local gy = math.floor(y / cell)
-    for x = 0, W - 1 do
-      local gx = math.floor(x / cell)
-      local d1, d2, s1 = 1e9, 1e9, nil
-      for oy = -1, 1 do
-        local row = gy + oy
-        if row >= 0 and row < CH then
-          for ox = -1, 1 do
-            local col = gx + ox
-            if col >= 0 and col < CW then
-              local s = stones[row * CW + col + 1]
-              local dx, dy = x - s[1], y - s[2]
-              local d = dx * dx + dy * dy
-              if d < d1 then d2, d1, s1 = d1, d, s elseif d < d2 then d2 = d end
-            end
-          end
+  for y = 0, N - 1 do
+    local gi = math.floor(y / CH)
+    for x = 0, N - 1 do
+      local best, bq = nil, 1
+      for ii = gi - 1, gi + 1 do
+        local gj = math.floor((x - (ii % 2) * 0.5 * CW) / CW)
+        for jj = gj - 1, gj + 1 do
+          local st = stones[(ii % ROWS) * COLS + (jj % COLS)]
+          local dx = x - (st.x + (jj - jj % COLS) * CW)
+          local dy = y - (st.y + (ii - ii % ROWS) * CH)
+          local c, sn = math.cos(st.turn), math.sin(st.turn)
+          local u, v = (dx * c + dy * sn) / st.a, (-dx * sn + dy * c) / st.b
+          local q = u * u + v * v
+          if q < bq then best, bq = st, q end
         end
       end
-      d1, d2 = math.sqrt(d1), math.sqrt(d2)
-      local edge = (d2 - d1) / cell              -- 0 on the line between two stones, about 0.5 in a stone's middle
-      local i = y * W + x + 1
-      local reach = patch_reach(x * PATCH_TEX - PATCH_X, y * PATCH_TEX - PATCH_Z)
-      local speck = rnd(0.94, 1.06)
-      if s1.keep and edge > s1.gap then
-        local dome = math.min(1, (edge - s1.gap) / 0.18)
-        heights[i] = 1 + math.sqrt(dome) * 2.5
-        local k = (0.72 + 0.28 * dome) * speck   -- darker round its rim
-        colors[i] = { 0.74 * s1.r * k, 0.73 * s1.g * k, 0.70 * s1.b * k, 1 }
+      local i = y * N + x + 1
+      local speck = rnd(0.95, 1.05)
+      if best then
+        local dome = math.sqrt(1 - bq)
+        heights[i] = dome * 7
+        local k = (0.68 + 0.32 * dome) * speck     -- darker where it dips into the gaps
+        colors[i] = { best.r * k, best.g * k, best.b2 * k, best.keep }
       else
         heights[i] = 0
-        local grit = reach < 0.82 and 1 or 0                    -- grit between stones, gone near the edge
-        colors[i] = { 0.36 * speck, 0.34 * speck, 0.31 * speck, grit }
+        colors[i] = { 0.2 * speck, 0.18 * speck, 0.16 * speck, 0.55 }
       end
     end
   end
-  local color = texture(W, H, function(x, y) local c = colors[y * W + x + 1] return c[1], c[2], c[3], c[4] end, "clamp")
-  return color, normal_map(W, H, heights, 1.6, false)
+  local color = texture(N, N, function(x, y) local c = colors[y * N + x + 1] return c[1], c[2], c[3], c[4] end)
+  return color, normal_map(N, N, heights, 1.0, true)
+end
+
+-- The patch: a grid whose vertex alpha is 1 in the middle and fades past the wobbly edge (see cobble_textures).
+local function patch_mesh()
+  local GX, GZ, X, Z = 32, 48, PATCH_X * 1.2, PATCH_Z * 1.2
+  local n, idx = {}, {}
+  for j = 0, GZ do
+    for i = 0, GX do
+      local x, z = -X + 2 * X * i / GX, -Z + 2 * Z * j / GZ
+      local reach = patch_reach(x, z)
+      local alpha = reach < 0.7 and 1 or reach < 1 and 1 - (reach - 0.7) / 0.3 * 0.5 or math.max(0, 0.5 - (reach - 1) * 5)
+      for _, v in ipairs({ x, 0, z, 0, 1, 0, x / COBBLE_TILE, z / COBBLE_TILE, 1, 1, 1, alpha }) do n[#n + 1] = v end
+    end
+  end
+  for j = 0, GZ - 1 do
+    for i = 0, GX - 1 do
+      local a = j * (GX + 1) + i + 1
+      local b = a + GX + 1
+      for _, v in ipairs({ a, b + 1, a + 1, a, b, b + 1 }) do idx[#idx + 1] = v end
+    end
+  end
+  return gfx.new_mesh(n, idx, "pnuc")
 end
 
 -- ---------------------------------------------------------------- meshes
@@ -156,34 +168,6 @@ local function flat_mesh(tris, color)
     end
   end
   return gfx.new_mesh(n, idx, color and "pnuc" or "pnu")
-end
-
--- A low-poly cloud puff: a lumpy ball of few faces, each coloured by which way it faces (white on top, blue
--- underneath), so clouds look lit from above whatever the sun does. Drawn unlit.
-local function puff_mesh()
-  local RINGS, SEGS = 5, 8
-  local p = {}
-  for r = 0, RINGS do
-    p[r] = {}
-    for s = 0, SEGS - 1 do
-      local phi, th = math.pi * r / RINGS, math.pi * 2 * (s + (r % 2) * 0.5) / SEGS
-      local k = (r == 0 or r == RINGS) and 0.5 or 0.5 * rnd(0.88, 1.08)
-      p[r][s] = { math.sin(phi) * math.cos(th) * k, math.cos(phi) * k, math.sin(phi) * math.sin(th) * k }
-    end
-  end
-  local tris = {}
-  for r = 0, RINGS - 1 do
-    for s = 0, SEGS - 1 do
-      local a, b, c, d = p[r][s], p[r][(s + 1) % SEGS], p[r + 1][s], p[r + 1][(s + 1) % SEGS]
-      if r > 0 then tris[#tris + 1] = { a, b, c } end
-      if r < RINGS - 1 then tris[#tris + 1] = { b, d, c } end
-    end
-  end
-  return flat_mesh(tris, function(_, ny)
-    local t = ((ny + 1) / 2) ^ 1.4
-    return CLOUD_UNDER[1] + (CLOUD_TOP[1] - CLOUD_UNDER[1]) * t, CLOUD_UNDER[2] + (CLOUD_TOP[2] - CLOUD_UNDER[2]) * t,
-           CLOUD_UNDER[3] + (CLOUD_TOP[3] - CLOUD_UNDER[3]) * t
-  end)
 end
 
 -- A flat quad lying at height y, with texture coordinates 0 to 1 across it.
@@ -290,7 +274,7 @@ end
 -- ---------------------------------------------------------------- building the world
 
 local made = false
-local sky, patch, patch_tex, patch_normal, cloud_floor, puff = nil, nil, nil, nil, nil, nil
+local sky, patch, patch_tex, patch_normal, cloud_floor = nil, nil, nil, nil, nil
 local stalk_tex, stalk_normal, leaf, leaf_tex, leaf_normal = nil, nil, nil, nil, nil
 local stalks, puffs, drifting = {}, {}, {}
 
@@ -309,9 +293,8 @@ local function make()
   made = true
   sky = sky_texture()
   patch_tex, patch_normal = cobble_textures()
-  patch = quad_mesh(-PATCH_X, -PATCH_Z, PATCH_X, PATCH_Z)
+  patch = patch_mesh()
   cloud_floor = quad_mesh(-CLOUD_FLOOR_X, CLOUD_FLOOR_Z0, CLOUD_FLOOR_X, CLOUD_FLOOR_Z1)
-  puff = puff_mesh()
   stalk_tex, stalk_normal = stalk_textures()
   leaf = leaf_mesh()
   leaf_tex, leaf_normal = leaf_textures()
@@ -362,7 +345,7 @@ end
 local function draw_puffs(list, dx)
   for _, b in ipairs(list) do
     local qx, qy, qz, qw = lib.quat_axis(0, 1, 0, b[5])
-    gfx.draw(puff, b[1] + dx, b[2], b[3], qx, qy, qz, qw, b[4], b[4] * 0.75, b[4], 1, 1, 1, 1)
+    gfx.draw(gfx.SPHERE, b[1] + dx, b[2], b[3], qx, qy, qz, qw, b[4], b[4] * 0.75, b[4], 1, 1, 1, 1)
   end
 end
 
@@ -377,11 +360,13 @@ end
 
 function S.draw(time)
   -- The flat cloud, then the cobbles laid on it (see-through where there are no stones).
-  gfx.draw(cloud_floor, 0, -0.005, 0, 0, 0, 0, 1, 1, 1, 1, 0.84, 0.89, 0.98, 1)
+  gfx.draw(cloud_floor, 0, -0.005, 0, 0, 0, 0, 1, 1, 1, 1, 0.76, 0.84, 0.97, 1)
   gfx.texture(1, patch_tex)
   gfx.texture(2, patch_normal)
   gfx.cutoff(0.5)
+  gfx.shader("stone")
   gfx.draw(patch, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1)
+  gfx.shader()
   gfx.cutoff(0)
 
   gfx.cast_shadows(false)
@@ -398,11 +383,11 @@ function S.draw(time)
   gfx.texture(2, nil)
   gfx.cull(true)
 
-  gfx.unlit(true)
+  gfx.shader("cloud")
   draw_puffs(puffs, 0)
   for _, s in ipairs(stalks) do draw_puffs(s.top, 0) end
   for _, c in ipairs(drifting) do draw_puffs(c, math.sin(time * c.speed * 0.05) * 12) end
-  gfx.unlit(false)
+  gfx.shader()
   gfx.cast_shadows(true)
 end
 
