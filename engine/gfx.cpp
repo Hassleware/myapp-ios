@@ -1888,6 +1888,8 @@ Handle new_texture(int w, int h, const uint8_t* rgba, int flags, bool scriptOwne
     return make_texture(w, h, rgba, flags, scriptOwned ? OWNER_SCRIPT : OWNER_FILE);
 }
 
+Handle engine_texture(int w, int h, const uint8_t* rgba, int flags) { return make_texture(w, h, rgba, flags, OWNER_ENGINE); }
+
 bool update_texture(Handle tex, const uint8_t* rgba) {
     Texture* t = textures.get(tex);
     if (!t || !rgba || t->mips != 1 || t->framebuffer) return false;

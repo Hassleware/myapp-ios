@@ -75,6 +75,7 @@ void reset_state();
 Handle load_texture(const std::string& name, int flags);
 Handle texture_from_memory(const void* bytes, size_t size, int flags, bool scriptOwned);
 Handle new_texture(int w, int h, const uint8_t* rgba, int flags, bool scriptOwned);
+Handle engine_texture(int w, int h, const uint8_t* rgba, int flags);   // kept for the app's whole life (Game Lab's own screens)
 // New pixels for a texture made with TEX_NOMIP, the same size as before (a camera picture, for example).
 bool update_texture(Handle tex, const uint8_t* rgba);
 Handle new_target(int w, int h);
