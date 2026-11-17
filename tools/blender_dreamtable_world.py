@@ -2,11 +2,8 @@
 
     blender -b -P tools/blender_dreamtable_world.py -- backdrop
 
-island    The cloud island the table stands on (flat under the cobble patch, low mounds, a puffy rim) and vines
-          along the patch's edge, as one low-poly mesh with sunlight, skylight and shadow baked into its vertex
+island    The cloud island the table stands on (flat in the middle, a scalloped puffy lip), as one low-poly mesh with sunlight, skylight and shadow baked into its vertex
           colours: island.glb, drawn unlit.
-pebbles   pebbles.png: 128 x 128, repeating, oval river stones in staggered rows with their lighting baked in;
-          alpha holds each stone's number (scenery.lua fades the patch's edge with it).
 sprite    cloud_sprite.png: one volumetric cloud on a clear background, 128 x 64, for drifting billboards.
 
 backdrop  Renders everything far away (sky, towering volumetric cumulus, a cloud sea below, beanstalks) once
@@ -299,7 +296,7 @@ def backdrop():
 
 # ---------------------------------------------------------------- the island
 
-PATCH_X, PATCH_Z = 3.1, 5.4                 # must match scenery.lua
+PATCH_X, PATCH_Z = 3.1, 5.4                 # the flat middle's size; the lip rises beyond it
 GROUND_X, GROUND_Z0, GROUND_Z1 = 6.5, -10.0, 12.0
 
 
@@ -383,47 +380,6 @@ def island():
     nt.links.new(bsdf.outputs[0], out.inputs["Surface"])
     land.data.materials.append(m)
 
-    # Vines along the patch's edge: low-poly tubes with a few leaves.
-    vine_mat, vnt, vout = node_material("vine")
-    vb = vnt.nodes.new("ShaderNodeBsdfPrincipled")
-    vb.inputs["Base Color"].default_value = lin((0.16, 0.50, 0.22)) + (1,)
-    vnt.links.new(vb.outputs[0], vout.inputs["Surface"])
-    vine_parts = []
-    for k in range(3):
-        a0 = k / 3 * math.tau + rng.uniform(0, 0.5)
-        span = rng.uniform(1.4, 1.9)
-        curve = bpy.data.curves.new("vine", "CURVE")
-        curve.dimensions = "3D"
-        curve.bevel_depth = 0.07
-        curve.bevel_resolution = 0
-        curve.bevel_mode = "ROUND"
-        curve.resolution_u = 1
-        spline = curve.splines.new("POLY")
-        n = 14
-        spline.points.add(n - 1)
-        for i in range(n):
-            a = a0 + span * i / (n - 1)
-            reach = (1.08 + 0.05 * math.sin(a * 17 + k)) * wobble(a)
-            x, z = math.cos(a) * PATCH_X * reach, math.sin(a) * PATCH_Z * reach
-            spline.points[i].co = tuple(b(x, 0.03 + 0.05 * max(0, math.sin(a * 23 + k * 2)), z)) + (1,)
-            spline.points[i].radius = 1 - 0.5 * i / n
-            if i % 3 == 1:
-                leaf = leaf_object(rng.uniform(0.45, 0.65), 3)
-                leaf.location = b(x, 0.06, z)
-                leaf.rotation_euler = (0, rng.uniform(-0.3, 0.1), -a + (math.pi / 2 if i % 6 == 1 else -math.pi / 2) + rng.uniform(-0.4, 0.4))
-                leaf.data.materials.append(vine_mat)
-                vine_parts.append(leaf)
-        o = bpy.data.objects.new("vine", curve)
-        sc.collection.objects.link(o)
-        o.data.materials.append(vine_mat)
-        bpy.ops.object.select_all(action="DESELECT")
-        o.select_set(True)
-        bpy.context.view_layer.objects.active = o
-        bpy.ops.object.convert(target="MESH")
-        vine_parts.append(bpy.context.object)
-    for o in vine_parts:                     # vines are thin: their shadows only dirty the bake
-        o.visible_shadow = False
-    land = join(vine_parts + [land], land)
     land.name = "island"
 
     # Bake the light into vertex colours.
@@ -441,55 +397,7 @@ def island():
     print(f"WORLD island saved: {tris} triangles")
 
 
-# ---------------------------------------------------------------- pebbles and the cloud sprite
-
-def pebbles():
-    """River stones on a repeating 128 x 128 tile, lit from the game's sun (across is game x, down is game z)."""
-    import numpy as np
-    N, ROWS, COLS = 128, 16, 10
-    CW, CH = N / COLS, N / ROWS
-    sun_dir = np.array(SUN) / np.linalg.norm(SUN)
-    img = np.zeros((N, N, 4))
-    img[...] = [0.26, 0.24, 0.21, 0.55]           # grit between the stones
-    best_q = np.full((N, N), 1.0)
-    ys, xs = np.mgrid[0:N, 0:N] + 0.5
-    for i in range(-1, ROWS + 1):
-        for j in range(-1, COLS + 1):
-            r = np.random.default_rng((i % ROWS) * 100 + (j % COLS))
-            cx = (j + 0.5 + (i % 2) * 0.5 + r.uniform(-0.2, 0.2)) * CW
-            cy = (i + 0.5 + r.uniform(-0.18, 0.18)) * CH
-            ax, by = CW * 0.5 * r.uniform(0.8, 1.15), CH * 0.5 * r.uniform(0.8, 1.15)
-            turn = r.uniform(-0.35, 0.35)
-            shade, warm, keep = r.uniform(0.62, 0.84), r.uniform(0.0, 0.06), r.uniform(0.55, 1.0)
-            c, s_ = math.cos(turn), math.sin(turn)
-            for ox in (-N, 0, N):
-                for oy in (-N, 0, N):
-                    dx, dy = xs - (cx + ox), ys - (cy + oy)
-                    u, v = (dx * c + dy * s_) / ax, (-dx * s_ + dy * c) / by
-                    q = u * u + v * v
-                    inside = q < best_q
-                    if not inside.any():
-                        continue
-                    best_q = np.where(inside, q, best_q)
-                    dome = np.sqrt(np.clip(1 - q, 0, 1))
-                    nu, nv = u * 1.6, v * 1.6                 # the dome's slope, in the stone's own axes
-                    n = np.stack([nu * c - nv * s_, np.ones_like(nu), nu * s_ + nv * c], -1)
-                    n /= np.linalg.norm(n, axis=-1, keepdims=True)
-                    light = 0.5 + 0.7 * np.clip(n @ sun_dir, 0, 1)
-                    glint = np.clip(n @ np.array([0.35, 0.93, 0.1]), 0, 1) ** 40 * 0.3
-                    k = (0.72 + 0.28 * dome) * light
-                    col = np.stack([(shade + warm) * k + glint, (shade + warm * 0.4) * k + glint,
-                                    (shade - warm * 0.6) * k + glint, np.full_like(k, keep)], -1)
-                    img = np.where(inside[..., None], col, img)
-    img[..., :3] *= np.random.default_rng(1).uniform(0.95, 1.05, (N, N, 1))
-    out = bpy.data.images.new("pebbles", N, N, alpha=True)
-    out.colorspace_settings.name = "sRGB"
-    out.pixels = np.flipud(np.clip(img, 0, 1)).ravel().tolist()
-    out.filepath_raw = os.path.join(GAME, "pebbles.png")
-    out.file_format = "PNG"
-    out.save()
-    print("WORLD pebbles saved")
-
+# ---------------------------------------------------------------- the cloud sprite
 
 def sprite():
     sc = reset()
@@ -527,7 +435,5 @@ if "backdrop" in what:
     backdrop()
 if "island" in what:
     island()
-if "pebbles" in what:
-    pebbles()
 if "sprite" in what:
     sprite()

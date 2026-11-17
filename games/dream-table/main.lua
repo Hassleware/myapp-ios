@@ -49,8 +49,8 @@ do
   trail_mesh = gfx.new_mesh(numbers, indices, "pnu")
 end
 
--- The ball (60 triangles: at 4 cm nobody sees more) and its shadow (a 10-sided disc), one unit across.
-local ball_mesh, disc_mesh
+-- The ball, one unit across (60 triangles: at 4 cm nobody sees more).
+local ball_mesh
 do
   local n, idx, RINGS, SEGS = {}, {}, 5, 6
   for r = 0, RINGS do
@@ -68,13 +68,22 @@ do
     end
   end
   ball_mesh = gfx.new_mesh(n, idx, "pnu")
-  n, idx = { 0, 0, 0, 0, 1, 0, 0, 0 }, {}
-  for k = 0, 9 do
-    local a = -k / 10 * math.pi * 2
-    for _, v in ipairs({ math.cos(a) * 0.5, 0, math.sin(a) * 0.5, 0, 1, 0, 0, 0 }) do n[#n + 1] = v end
-    for _, v in ipairs({ 1, 2 + k, 2 + (k + 1) % 10 }) do idx[#idx + 1] = v end
+end
+
+-- Soft blob shadows: a flat square (two triangles) with a round, soft-edged picture, 32 x 32.
+local blob_mesh = gfx.new_mesh({ -0.5, 0, -0.5, 0, 1, 0, 0, 0,  0.5, 0, -0.5, 0, 1, 0, 1, 0,  0.5, 0, 0.5, 0, 1, 0, 1, 1,  -0.5, 0, 0.5, 0, 1, 0, 0, 1 },
+                               { 1, 3, 2, 1, 4, 3 }, "pnu")
+local blob_tex
+do
+  local px = {}
+  for y = 0, 31 do
+    for x = 0, 31 do
+      local d = math.sqrt(((x + 0.5) / 16 - 1) ^ 2 + ((y + 0.5) / 16 - 1) ^ 2)
+      local a = math.max(0, math.min(1, (1 - d) / 0.55))
+      px[#px + 1] = string.char(255, 255, 255, math.floor(a * a * (3 - 2 * a) * 255))
+    end
   end
-  disc_mesh = gfx.new_mesh(n, idx, "pnu")
+  blob_tex = gfx.new_texture(32, 32, table.concat(px), "clamp")
 end
 
 -- state: "serve" (someone holds the ball), "toss" (a serve in the air), "rally", "point" (a short pause), "over"
@@ -1031,10 +1040,16 @@ end
 -- ---------------------------------------------------------------- drawing
 
 -- Text with a black outline: the words drawn in black around it, then in colour on top.
-local OUTLINE = 2   -- outline thickness, in 2D units
+-- A soft drop shadow, then the outline in six directions (round, with no gaps at the letters' sides), then the
+-- words. The outline grows with the text. Eight copies of each letter: budget.lua counts them.
+local OUTLINE = 0.11   -- outline thickness, as a share of the text's size
 local function text(s, x, y, size, r, g, b, a)
-  for k = 0, 3 do   -- four diagonal copies: enough for a clean outline, and cheap (budget.lua)
-    gfx.text(s, x + (k % 2 * 2 - 1) * OUTLINE, y + (k // 2 * 2 - 1) * OUTLINE, size, 0, 0, 0, a or 1)
+  a = a or 1
+  local o = math.max(1.5, size * OUTLINE)
+  gfx.text(s, x + o * 0.6, y + o * 1.6, size, 0.05, 0.08, 0.25, a * 0.45)
+  for k = 0, 5 do
+    local angle = k / 6 * math.pi * 2 + math.pi / 6
+    gfx.text(s, x + math.cos(angle) * o, y + math.sin(angle) * o, size, 0.04, 0.03, 0.1, a)
   end
   gfx.text(s, x, y, size, r, g, b, a)
 end
@@ -1052,13 +1067,15 @@ function draw()
   gfx.blend("alpha")
   gfx.depth(true, false)
   gfx.cull(false)
-  gfx.cube(-0.2, 0.004, 0, HALF_W * 2 + 0.1, 0.001, HALF_L * 2 + 0.1, 0.05, 0.08, 0.2, 0, 0.45)
+  gfx.texture(1, blob_tex)
+  gfx.draw(blob_mesh, -0.2, 0.004, 0, 0, 0, 0, 1, HALF_W * 2 + 0.5, 1, HALF_L * 2 + 0.5, 0.1, 0.14, 0.35, 0.75)
   for _, m in ipairs({ robot, you }) do
-    gfx.draw(disc_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.7, 1, 0.5, 0.05, 0.08, 0.2, 0.45 / (1 + m.body.air * 2))
+    gfx.draw(blob_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.9, 1, 0.7, 0.1, 0.14, 0.35, 0.45 / (1 + m.body.air * 2))
     for _, leg in ipairs(m.legs) do
-      if leg.plant then gfx.draw(disc_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.22, 1, 0.3, 0.05, 0.08, 0.2, 0.45) end
+      if leg.plant then gfx.draw(blob_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.3, 1, 0.38, 0.1, 0.14, 0.35, 0.5) end
     end
   end
+  gfx.texture(1, nil)
   gfx.cull(true)
   gfx.depth(true, true)
   gfx.blend("opaque")
@@ -1091,7 +1108,11 @@ function draw()
   local size = R * 3.2 / (1 + (ball.y - floor) * 0.4)
   gfx.unlit(true)
   gfx.blend("alpha")
-  gfx.draw(disc_mesh, ball.x, floor, ball.z, 0, 0, 0, 1, size, 1, size, 0, 0, 0, 0.75)
+  gfx.cull(false)
+  gfx.texture(1, blob_tex)
+  gfx.draw(blob_mesh, ball.x, floor, ball.z, 0, 0, 0, 1, size * 1.4, 1, size * 1.4, 0, 0, 0, 0.75)
+  gfx.texture(1, nil)
+  gfx.cull(true)
   local sparks = {}   -- the bursts: square sparks flying out, and a flash (two triangles each)
   for _, e in ipairs(effects) do
     local age = e.t / 0.3
@@ -1143,8 +1164,8 @@ function draw()
   local board = words(string.format("YOU %d  -  %d CPU", score.player, score.cpu))
   text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
   local serving = words((state == "serve" or state == "point") and (serve_turn() == "player" and "YOUR SERVE" or "CPU SERVES") or "")
-  text(serving, w - right - gfx.text_width(serving, 18) - 24, top + 60, 18, 0.7, 0.75, 0.9)
-  if wins > 0 then text(words("WINS " .. wins), left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
+  text(serving, w - right - gfx.text_width(serving, 20) - 24, top + 62, 20, 0.85, 0.9, 1)
+  if wins > 0 then text(words("WINS " .. wins), left + 80, top + 58, 20, 0.85, 0.9, 1) end
 
   local center = nil
   if state == "serve" and server == "player" then center = "DRAW A LINE TO TOSS" end
