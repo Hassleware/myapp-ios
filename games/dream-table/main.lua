@@ -113,7 +113,9 @@ local FOLLOW_THROUGH = 0.5            -- seconds of a shot played after its hit,
 local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
-local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it
+local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it (the robot's)
+local YOUR_HIT_RANGE, YOUR_LEAD = 0.18, 0.12   -- yours is more forgiving, and your swing may start this late before
+                                              -- contact (part-way through its wind-up), so a line after a dash still hits
 local TOP_SPEED = 2.2                -- metres a second: the body can't outrun its feet
 
 local chart = include("chart.lua")   -- the charted jump: heights a frame, and what is worked out from them
@@ -441,7 +443,7 @@ local function choose_and_swing(m, points, cost_of, hand, lead, peek)
           local sink = math.max(-CROUCH, math.min(0, need))
           local dash = dash_need(run, t - busy, t)
           if dash and not assist then dash = nil end                -- it needs a dash you haven't made
-          if dash == nil and lead < 0.3 and run <= SERVE.reach then dash = true end   -- a serve: glide into place
+          if dash == nil and state == "toss" and m == you and run <= SERVE.reach then dash = true end   -- your serve: glide into place
           if dash ~= nil then
             local cost = cost_of(move, p, math.abs(need - sink) - sink * 0.1, run, off) + (dash and DASH_COST or 0)
             if cost < best_cost then best, at, best_cost, how, best_sink, best_delay, best_dash = move, p, cost, "ground", sink, nil, dash end
@@ -528,7 +530,7 @@ local function plan_line(m, line, serving)
   return choose_and_swing(m, flight(m, serving), function(move, p, fit, run, off)
     local likeness = move.swing[1] * line.right + move.swing[2] * line.up   -- 1: the same direction
     return (1 - likeness) * 2.5 + fit * 3 + run * 0.8
-  end, nil, serving and SERVE.lead)
+  end, nil, serving and SERVE.lead or YOUR_LEAD)
 end
 
 -- A turn from three axes (where the turn sends x, y and z), as a quaternion.
@@ -1137,7 +1139,7 @@ local function step_ball(dt)
     end
   end
 
-  local function touching(m) return len(sub(v(ball.x, ball.y, ball.z), m.body.blade)) <= HIT_RANGE end
+  local function touching(m) return len(sub(v(ball.x, ball.y, ball.z), m.body.blade)) <= (m == you and YOUR_HIT_RANGE or HIT_RANGE) end
 
   -- Serves: the tossed ball is hit when it meets the server's bat on the way down; dropped, it's served again.
   if state == "toss" then
