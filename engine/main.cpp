@@ -364,7 +364,7 @@ void draw_background(float goldBottom) {
 
 void draw_list() {
     gfx::font(uiFont);
-    const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.8f}, row[4] = {1, 1, 1, 0.2f}, accent[4] = {1, 1, 1, 0.9f};
+    const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.8f}, row[4] = {0.90f, 0.71f, 0.50f, 1}, accent[4] = {1, 1, 1, 1};
     const float ink[4] = {0.32f, 0.32f, 0.35f, 1}, textShadow[4] = {0.45f, 0.27f, 0.03f, 0.45f};   // ink: text on the stripes
     // Everything sits inside the part of the screen the phone leaves free.
     const float* safe = gfx::safe_area();
@@ -379,10 +379,12 @@ void draw_list() {
 
     float tapX = 0, tapY = 0;
     bool tapped = input::tap(tapX, tapY);
-    // Rows grow to HOVER_SCALE under the mouse or a finger and sink PRESS_SHIFT of their height while pressed,
-    // both eased; a game starts when the press is let go over the row it began on.
-    const float HOVER_SCALE = 1.1f, PRESS_SHIFT = 0.05f, EASE = 14;   // EASE: how fast they follow, per second
-    static std::vector<float> grow, sink;
+    // Rows grow to HOVER_SCALE under the mouse or a finger. Behind each is the same button with its colours
+    // inverted; pressing pulls the face in by PRESS_INSET on every edge (the same distance on each, not a scale),
+    // so the inverted copy shows round it as a rim. Both eased; a game starts when the press is let go over the
+    // row it began on.
+    const float HOVER_SCALE = 1.1f, PRESS_INSET = 6, EASE = 14;   // EASE: how fast they follow, per second
+    static std::vector<float> grow, sink;   // sink: how far the face is pulled in, 0 to PRESS_INSET
     static int pressedRow = -1;
     static Uint64 lastDraw = 0;
     Uint64 nowTicks = SDL_GetTicks();
@@ -392,8 +394,7 @@ void draw_list() {
     grow.resize(games.size(), 1);
     sink.resize(games.size(), 0);
     float px = 0, py = 0;
-    bool down = false, present = input::pointer(px, py, down);
-    float y = top + 130;
+    bool down = false, present = input::pointer(px, py, down);    float y = top + 130;
     for (size_t i = 0; i < games.size(); i++) {
         const std::string& name = games[i];
         bool over = present && py >= y && py < y + 72 && px >= left && px <= right;
@@ -407,12 +408,15 @@ void draw_list() {
             }
         }
         grow[i] += ((over ? HOVER_SCALE : 1) - grow[i]) * follow;
-        sink[i] += ((over && down && pressedRow == (int)i ? PRESS_SHIFT * 72 : 0) - sink[i]) * follow;
-        // The whole button scaled about its centre, then moved down while pressed.
-        float s = grow[i], cx = (left + right) / 2, cy = y + 36 + sink[i];
+        sink[i] += ((over && down && pressedRow == (int)i ? PRESS_INSET : 0) - sink[i]) * follow;
+        // The whole button scaled about its centre: the inverted copy, then the face pulled in by `in` per edge.
+        float s = grow[i], cx = (left + right) / 2, cy = y + 36, in = sink[i];
         float bw = (right - left) * s, bh = 72 * s, bx = cx - bw / 2, by = cy - bh / 2;
-        gfx::rect(bx, by, bw, bh, row);
-        gfx::rect(bx, by, 6 * s, bh, accent);
+        const float rowInv[4] = {1 - row[0], 1 - row[1], 1 - row[2], 1}, accentInv[4] = {1 - accent[0], 1 - accent[1], 1 - accent[2], 1};
+        gfx::rect(bx, by, bw, bh, rowInv);
+        gfx::rect(bx, by, 6 * s, bh, accentInv);
+        gfx::rect(bx + in, by + in, bw - 2 * in, bh - 2 * in, row);
+        gfx::rect(bx + in, by + in, 6 * s, bh - 2 * in, accent);
         gfx::text(name, bx + 34 * s, by + 26 * s, 24 * s, textShadow);
         gfx::text(name, bx + 32 * s, by + 24 * s, 24 * s, title);
         y += 84;
