@@ -19,7 +19,7 @@ float4 fsMain(VSOut input) : SV_Target
     float3 sunDir = -normalize(frame.lightDir.xyz);
     float3 v = normalize(frame.cameraPos.xyz - input.world);
     float3 h = normalize(sunDir + v);
-    float shine = pow(saturate(dot(n, h)), 30.0) * 0.45 * saturate(albedo.g * 4.0) * sunShadow(input.world, n);
+    float shine = pow(saturate(dot(n, h)), 30.0) * 0.3 * saturate(albedo.g * 4.0) * sunShadow(input.world, n);
     float3 c = albedo.rgb * lightAt(input.world, n) + frame.lightColor.rgb * shine;
     return float4(applyFog(c, input.world), 1.0);
 }

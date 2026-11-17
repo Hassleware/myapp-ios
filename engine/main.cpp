@@ -884,6 +884,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
 #if defined(SDL_PLATFORM_IOS)
     flags |= SDL_WINDOW_FULLSCREEN | SDL_WINDOW_BORDERLESS;
 #endif
+    if (SDL_getenv("GAMELAB_HIDDEN")) flags |= SDL_WINDOW_HIDDEN;   // PC checks: render and screenshot without showing a window
     int width = 1280, height = 720;
     if (const char* size = SDL_getenv("GAMELAB_WINDOW")) SDL_sscanf(size, "%dx%d", &width, &height);   // e.g. 414x896 to try a phone shape
     window = SDL_CreateWindow("Game Lab", width, height, flags);
