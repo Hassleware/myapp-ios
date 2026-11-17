@@ -101,6 +101,14 @@ local serve_ball, serve_bounced = false, false   -- the ball in play is a serve,
 -- touches the bat. Feet stay planted and step when the body moves away from them; the animation's own steps stay.
 local dummy = model.load("mannequin.glb")
 local bat_model = model.load("bat.glb")
+-- Feel: what a hit and a bounce sound and look like (tools/make_dreamtable_sounds.py makes the sounds).
+local FEEL = {
+  hit = audio.load("hit_bat.wav"), bounce = audio.load("bounce.wav"),
+  stop = 0.07,          -- a hit freezes the game this long (real seconds): hit-stop
+  shake = 0.06,         -- and kicks the camera this far (metres), dying away
+  stop_until = nil, kick = 0, at = nil,
+  landing = nil,        -- where the robot's ball will bounce on your side: { x, z }
+}
 local FOLLOW_THROUGH = 0.5            -- seconds of a shot played after its hit, then back to the ready pose
 local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
@@ -509,7 +517,7 @@ local function start_hint()
     -- first, CUE_GAP before it, and the two cues never land together.
     local swing_at = now + r.contact - SWING_CUE
     if r.how == "jump" and r.delay then swing_at = math.min(swing_at, now + r.delay - CUE_GAP) end
-    hint.moves[#hint.moves + 1] = { at = math.max(now + CUE_REACT, swing_at), kind = "swing" }
+    -- (No swing cue: draw your line any time after the robot's shot. Only the special moves get one.)
     table.sort(hint.moves, function(a, b) return a.at < b.at end)
   end)
 end
@@ -888,6 +896,9 @@ local function follow_camera(dt)
 end
 local function camera()
   cam.ex, cam.ey, cam.ez = cam.x, CAM_HEIGHT + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK
+  if FEEL.kick > 0.001 then                           -- a hit's camera kick, dying away
+    cam.ex, cam.ey = cam.ex + (math.random() - 0.5) * FEEL.kick, cam.ey + (math.random() - 0.5) * FEEL.kick
+  end
   gfx.camera(cam.ex, cam.ey, cam.ez, cam.x * 0.7, CAM_LOOK, -0.2 + cam.back * 0.2, 50)
 end
 
@@ -970,7 +981,26 @@ local function hit(by, vx, vy, vz, serving)
   last, bounces = by, { player = 0, cpu = 0 }
   serve_ball, serve_bounced = serving or false, false
   state = "rally"
-  if by == "player" then input.haptic("light") end
+  audio.play(FEEL.hit, by == "player" and 1 or 0.7, by == "player" and 1 or 1.08)
+  FEEL.stop_until = sys.real_time() + (by == "player" and FEEL.stop or FEEL.stop * 0.6)
+  FEEL.kick = by == "player" and FEEL.shake or FEEL.shake * 0.4
+  sys.time_scale(0)
+  if by == "player" then input.haptic("medium") end
+  -- Where the robot's ball will first bounce on your side, played through the ball's own physics.
+  FEEL.landing = nil
+  if by == "cpu" and not serving then
+    local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, vx, vy, vz
+    for _ = 1, 400 do
+      vy = vy - G / 120
+      local py = y
+      x, y, z = x + vx / 120, y + vy / 120, z + vz / 120
+      if y - R <= TABLE_Y and py - R >= TABLE_Y - 0.02 and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
+        if z > 0 then FEEL.landing = { x, z } end
+        break
+      end
+      if y < 0 then break end
+    end
+  end
 end
 
 -- Your shot, aimed by the line you drew: it goes the way the line went across, longer lines go deeper and faster.
@@ -1038,6 +1068,7 @@ local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
   ball.call, ball.kick = nil, nil                       -- a sky or wide ball's call ends with its point
+  FEEL.landing = nil
   hint = nil
   you.armed, robot.armed, you.pending = false, false, nil
   for _, m in ipairs({ you, robot }) do                 -- back to their spots behind the table to serve or receive
@@ -1075,6 +1106,8 @@ local function step_ball(dt)
 
   -- The table.
   if ball.y - R <= TABLE_Y and ball.vy < 0 and py - R >= TABLE_Y - 0.02 and math.abs(ball.x) <= HALF_W and math.abs(ball.z) <= HALF_L then
+    audio.play(FEEL.bounce, math.min(1, 0.3 + math.abs(ball.vy) * 0.15), 1)
+    if ball.z > 0 then FEEL.landing = nil end
     ball.y, ball.vy = TABLE_Y + R, -ball.vy * BOUNCE
     ball.vx, ball.vz = ball.vx * 0.97, ball.vz * 0.97
     local side = side_of(ball.z)
@@ -1361,6 +1394,32 @@ function draw()
   gfx.blend("opaque")
   draw_mannequin(robot)
   draw_mannequin(you)
+  -- Where the robot's ball will bounce on your side (a ring on the table), and your bat glowing while a swing is
+  -- loaded (from the moment you draw it until it meets the ball).
+  local marks = {}
+  if FEEL.landing and state == "rally" and last == "cpu" then
+    for k = 0, 11 do
+      local a = k / 12 * math.pi * 2
+      for _, v in ipairs({ FEEL.landing[1] + math.cos(a) * 0.1, TABLE_Y + 0.01, FEEL.landing[2] + math.sin(a) * 0.1, 0.035, 0.6, 1, 1, 0.95 }) do marks[#marks + 1] = v end
+    end
+    for _, v in ipairs({ FEEL.landing[1], TABLE_Y + 0.01, FEEL.landing[2], 0.06, 1, 1, 1, 0.9 }) do marks[#marks + 1] = v end
+  end
+  if you.armed or you.pending then
+    local p = you.body.blade
+    local glow = 0.16 + 0.04 * math.sin(sys.real_time() * 14)
+    for _, v in ipairs({ p[1], p[2], p[3], glow, 1, 0.5, 0.85, 0.75 }) do marks[#marks + 1] = v end
+  end
+  if #marks > 0 then
+    gfx.unlit(true)
+    gfx.blend("alpha")
+    gfx.depth(true, false)
+    gfx.texture(1, blob_tex)
+    gfx.particles(marks)
+    gfx.texture(1, nil)
+    gfx.depth(true, true)
+    gfx.blend("opaque")
+    gfx.unlit(false)
+  end
   local flames = {}
   flame(robot, flames, sys.real_time())
   flame(you, flames, sys.real_time())
@@ -1390,12 +1449,12 @@ function draw()
   local sparks = {}   -- the bursts: square sparks flying out, and a flash (two triangles each)
   for _, e in ipairs(effects) do
     local age = e.t / 0.3
-    local ring = 0.04 + 0.22 * age
-    for k = 0, 11 do
-      local a = k / 12 * math.pi * 2
-      for _, v in ipairs({ e.x + math.cos(a) * ring, e.y + math.sin(a) * ring, e.z, 0.03 * (1 - age), 1, 0.9, 0.5, 1 - age }) do sparks[#sparks + 1] = v end
+    local ring = 0.06 + 0.45 * age
+    for k = 0, 15 do
+      local a = k / 16 * math.pi * 2
+      for _, v in ipairs({ e.x + math.cos(a) * ring, e.y + math.sin(a) * ring, e.z, 0.05 * (1 - age), 1, 0.85, 0.4, 1 - age }) do sparks[#sparks + 1] = v end
     end
-    for _, v in ipairs({ e.x, e.y, e.z, 0.16 * (1 - age), 1, 1, 0.85, 0.7 * (1 - age) }) do sparks[#sparks + 1] = v end
+    for _, v in ipairs({ e.x, e.y, e.z, 0.32 * (1 - age), 1, 1, 0.9, 0.85 * (1 - age) }) do sparks[#sparks + 1] = v end
   end
   if #sparks > 0 then gfx.particles(sparks) end
   gfx.blend("opaque")
@@ -1501,6 +1560,8 @@ function draw()
     end
   end
   local frame_dt = math.min(0.1, sys.real_time() - (meter.at or sys.real_time()))
+  if FEEL.stop_until and sys.real_time() >= FEEL.stop_until then FEEL.stop_until = nil sys.time_scale(1) end
+  FEEL.kick = FEEL.kick * math.exp(-14 * frame_dt)
   meter.at = sys.real_time()
   draw_meter(blob_tex, w, h, right, sys.real_time(), frame_dt)
   draw_rating(w, h)

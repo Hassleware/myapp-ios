@@ -211,6 +211,8 @@ bool convert(Sound& s, const SDL_AudioSpec& from, const Uint8* data, int bytes) 
 }  // namespace
 
 bool init() {
+    // PC checks run hidden (GAMELAB_HIDDEN) and silent: a self-test at many times real speed must not fill the room.
+    if (SDL_getenv("GAMELAB_HIDDEN")) return false;
     // On the iPhone: obey the ring/silent switch and let the player's own music keep playing, as games should.
     SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "ambient");
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
