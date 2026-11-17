@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -419,16 +420,38 @@ void draw_list() {
         float bw = (right - left) * s, bh = 72 * s, bx = cx - bw / 2, by = cy - bh / 2;
         // Styled like a desktop OK button: a white outer ring, a dark ring, a light grey face, rounded corners
         // and black centred text. The copy behind has every colour inverted.
+        // Styled like a desktop OK button: a white outer ring, a see-through gap, a light grey face, rounded
+        // corners and black centred text. The copy behind has every colour inverted.
         auto button = [&](float x, float y0, float w, float h, float k, bool invert) {
-            const float RING = 3 * s, RADIUS = 14 * s, shades[3] = {0.97f, 0.2f, 0.94f};
-            for (int l = 0; l < 3; l++) {
-                float v = (invert ? 1 - shades[l] : shades[l]) * k, c[4] = {v, v, v, 1};
-                float o = l * RING, r = RADIUS - o, lx = x + o, ly = y0 + o, lw = w - 2 * o, lh = h - 2 * o;
-                gfx::rect(lx + r, ly, lw - 2 * r, lh, c);
-                gfx::rect(lx, ly + r, lw, lh - 2 * r, c);
-                for (int corner = 0; corner < 4; corner++)
-                    gfx::circle(corner & 1 ? lx + lw - r : lx + r, corner & 2 ? ly + lh - r : ly + r, r, c);
+            const float RING = 3 * s, RADIUS = 14 * s, ringShade = 0.97f, faceShade = 0.94f;
+            float v = (invert ? 1 - ringShade : ringShade) * k, c[4] = {v, v, v, 1};
+            // The ring: corner arcs joined into one closed outline, each step a quad between outer and inner edge.
+            static gfx::Handle white = 0;
+            if (!white) { const uint8_t px[4] = {255, 255, 255, 255}; white = gfx::engine_texture(1, 1, px, 0); }
+            const int STEPS = 8;
+            float prev[4] = {}, uv[6] = {};
+            for (int j = 0; j <= 4 * (STEPS + 1); j++) {
+                int corner = (j / (STEPS + 1)) % 4, step = j % (STEPS + 1);   // corners clockwise from top left
+                float a = 3.14159265f * (1 + corner * 0.5f + step * 0.5f / STEPS);
+                float ccx = corner == 1 || corner == 2 ? x + w - RADIUS : x + RADIUS;
+                float ccy = corner >= 2 ? y0 + h - RADIUS : y0 + RADIUS;
+                float cur[4] = {ccx + std::cos(a) * RADIUS, ccy + std::sin(a) * RADIUS,
+                                ccx + std::cos(a) * (RADIUS - RING), ccy + std::sin(a) * (RADIUS - RING)};
+                if (j) {
+                    const float t1[6] = {prev[0], prev[1], cur[0], cur[1], cur[2], cur[3]};
+                    const float t2[6] = {prev[0], prev[1], cur[2], cur[3], prev[2], prev[3]};
+                    gfx::triangle(white, t1, uv, c);
+                    gfx::triangle(white, t2, uv, c);
+                }
+                memcpy(prev, cur, sizeof prev);
             }
+            v = (invert ? 1 - faceShade : faceShade) * k;
+            const float f[4] = {v, v, v, 1};
+            float o = 2 * RING, r = RADIUS - o, lx = x + o, ly = y0 + o, lw = w - 2 * o, lh = h - 2 * o;
+            gfx::rect(lx + r, ly, lw - 2 * r, lh, f);
+            gfx::rect(lx, ly + r, lw, lh - 2 * r, f);
+            for (int corner = 0; corner < 4; corner++)
+                gfx::circle(corner & 1 ? lx + lw - r : lx + r, corner & 2 ? ly + lh - r : ly + r, r, f);
         };
         button(bx, by, bw, bh, 1, true);
         float k = 1 - PRESS_DARKEN * shade[i];
