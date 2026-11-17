@@ -16,6 +16,7 @@
 -- ponytail: serves go straight to the other side (no first bounce on your own side) and there is no spin.
 
 local lib = include("lib.lua")
+local scenery = include("scenery.lua")
 
 -- The real table, in metres: 2.74 long (along z), 1.525 wide, 0.76 high, net 15.25 cm.
 local TABLE_Y, HALF_W, HALF_L, NET_TOP = 0.76, 0.7625, 1.37, 0.76 + 0.1525
@@ -578,6 +579,7 @@ end
 -- Walk left or right and it pans that way by CAM_SIDE of the distance; walk back from the table and it pulls back
 -- and up (zooms out), walk in and it comes in and down (zooms in). It glides after you rather than jumping.
 local CAM_SIDE, CAM_BACK, CAM_UP = 0.5, 0.8, 0.6
+local CAM_HEIGHT, CAM_LOOK = 3.4, 1.0   -- eye height and the height it looks at: low enough to see the sky
 local cam = { x = 0, back = 0 }
 local function follow_camera(dt)
   local home = HALF_L + 0.6                          -- where you start: the camera's resting place
@@ -585,8 +587,8 @@ local function follow_camera(dt)
   cam.back = lib.approach(cam.back, you.body.z - home, 4, dt)
 end
 local function camera()
-  gfx.camera(cam.x, 4.0 + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK,
-             cam.x * 0.7, 0.6, -0.2 + cam.back * 0.2, 50)
+  gfx.camera(cam.x, CAM_HEIGHT + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK,
+             cam.x * 0.7, CAM_LOOK, -0.2 + cam.back * 0.2, 50)
 end
 
 -- ---------------------------------------------------------------- shots
@@ -970,16 +972,13 @@ end
 -- ---------------------------------------------------------------- drawing
 
 function draw()
-  gfx.clear(0.05, 0.03, 0.11)
+  gfx.clear(scenery.FOG[1], scenery.FOG[2], scenery.FOG[3])
   camera()
-  gfx.fog(0.05, 0.03, 0.11, 5, 13)
-  gfx.light(-0.35, -1, -0.25, 1.0, 0.95, 0.9)
-  gfx.ambient(0.34, 0.31, 0.46)
+  scenery.lights()
   gfx.shadows(0, TABLE_Y, 0.4, 3.0, 0.65)
-  gfx.point_light(0, 2.2, 0, 4.5, 0.55, 0.35, 0.9)
 
-  -- Floor, table, lines, legs.
-  gfx.plane(0, 0, 0, 16, 16, 0.14, 0.10, 0.22)
+  -- The world (sky, cloud island, cobbles, beanstalks), then the table, lines, legs.
+  scenery.draw(sys.real_time())
   gfx.cube(0, TABLE_Y - 0.015, 0, HALF_W * 2, 0.03, HALF_L * 2, 0.16, 0.22, 0.62)
   local ly = TABLE_Y + 0.001
   for _, sx in ipairs({ -1, 1 }) do
