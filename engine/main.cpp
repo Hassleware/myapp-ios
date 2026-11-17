@@ -364,7 +364,7 @@ void draw_background(float goldBottom) {
 
 void draw_list() {
     gfx::font(uiFont);
-    const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.8f}, row[4] = {0.90f, 0.71f, 0.50f, 1}, accent[4] = {1, 1, 1, 1};
+    const float title[4] = {1, 1, 1, 1}, dim[4] = {1, 1, 1, 0.8f};
     const float ink[4] = {0.32f, 0.32f, 0.35f, 1}, textShadow[4] = {0.45f, 0.27f, 0.03f, 0.45f};   // ink: text on the stripes
     // Everything sits inside the part of the screen the phone leaves free.
     const float* safe = gfx::safe_area();
@@ -417,15 +417,24 @@ void draw_list() {
         // The whole button scaled about its centre: the inverted copy, then the face pulled in by `in` per edge.
         float s = grow[i], cx = (left + right) / 2, cy = y + 36, in = sink[i];
         float bw = (right - left) * s, bh = 72 * s, bx = cx - bw / 2, by = cy - bh / 2;
-        const float rowInv[4] = {1 - row[0], 1 - row[1], 1 - row[2], 1}, accentInv[4] = {1 - accent[0], 1 - accent[1], 1 - accent[2], 1};
-        gfx::rect(bx, by, bw, bh, rowInv);
-        gfx::rect(bx, by, 6 * s, bh, accentInv);
+        // Styled like a desktop OK button: a white outer ring, a dark ring, a light grey face, rounded corners
+        // and black centred text. The copy behind has every colour inverted.
+        auto button = [&](float x, float y0, float w, float h, float k, bool invert) {
+            const float RING = 3 * s, RADIUS = 14 * s, shades[3] = {0.97f, 0.2f, 0.94f};
+            for (int l = 0; l < 3; l++) {
+                float v = (invert ? 1 - shades[l] : shades[l]) * k, c[4] = {v, v, v, 1};
+                float o = l * RING, r = RADIUS - o, lx = x + o, ly = y0 + o, lw = w - 2 * o, lh = h - 2 * o;
+                gfx::rect(lx + r, ly, lw - 2 * r, lh, c);
+                gfx::rect(lx, ly + r, lw, lh - 2 * r, c);
+                for (int corner = 0; corner < 4; corner++)
+                    gfx::circle(corner & 1 ? lx + lw - r : lx + r, corner & 2 ? ly + lh - r : ly + r, r, c);
+            }
+        };
+        button(bx, by, bw, bh, 1, true);
         float k = 1 - PRESS_DARKEN * shade[i];
-        const float face[4] = {row[0] * k, row[1] * k, row[2] * k, 1}, faceAccent[4] = {accent[0] * k, accent[1] * k, accent[2] * k, 1};
-        gfx::rect(bx + in, by + in, bw - 2 * in, bh - 2 * in, face);
-        gfx::rect(bx + in, by + in, 6 * s, bh - 2 * in, faceAccent);
-        gfx::text(name, bx + 34 * s, by + 26 * s, 24 * s, textShadow);
-        gfx::text(name, bx + 32 * s, by + 24 * s, 24 * s, title);
+        button(bx + in, by + in, bw - 2 * in, bh - 2 * in, k, false);
+        const float label[4] = {0.05f * k, 0.05f * k, 0.05f * k, 1};
+        gfx::text(name, cx - gfx::text_width(name, 24 * s) / 2, cy - 12 * s, 24 * s, label);
         y += 84;
     }
     if (games.empty()) gfx::text("No games here yet.", left + 8, y + 10, 22, dim);
