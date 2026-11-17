@@ -30,6 +30,10 @@ void (*logSink)(const char*, const std::string&) = nullptr;
 
 const float FIXED_STEP = 1.0f / 60.0f;
 float timeScale = 1, fixedDebt = 0, gameSeconds = 0, lastDt = 0;
+// Lua instructions run, counted by a hook every OPS_STEP of them: this frame so far, and the whole last frame.
+const int OPS_STEP = 100;
+long long luaOps = 0, lastFrameOps = 0;
+void count_ops(lua_State*, lua_Debug*) { luaOps += OPS_STEP; }
 bool stepOnce = false, wantHud = false, listenerSet = false;
 
 struct Saved {
@@ -1015,6 +1019,25 @@ int l_stats(lua_State* l) {
     return 4;
 }
 
+// sys.budget() -> a table of what the game is using, to hold it to a budget (a PS1's, for example):
+// triangles drawn last frame, lua_ops (Lua instructions run last frame; lua_ops_now: so far this one), texels and largest_texture (its own
+// textures), mesh_vertices, mesh_triangles, animation_bytes (at 16 bits a number) and lua_kb (its Lua heap).
+int l_budget(lua_State* l) {
+    gfx::Usage u = gfx::usage();
+    lua_createtable(l, 0, 8);
+    auto set = [&](const char* k, double v) { lua_pushnumber(l, v); lua_setfield(l, -2, k); };
+    set("triangles", gfx::stats().triangles);
+    set("lua_ops", (double)lastFrameOps);
+    set("lua_ops_now", (double)luaOps);   // so far this frame: for timing one piece of code
+    set("texels", u.texels);
+    set("largest_texture", u.largestTexture);
+    set("mesh_vertices", u.meshVertices);
+    set("mesh_triangles", u.meshTriangles);
+    set("animation_bytes", model::animation_bytes());
+    set("lua_kb", lua_gc(l, LUA_GCCOUNT, 0) + lua_gc(l, LUA_GCCOUNTB, 0) / 1024.0);
+    return 1;
+}
+
 // input.keyboard(show, kind) shows or hides the keyboard; with no arguments it says whether it is showing.
 int l_keyboard(lua_State* l) {
     if (lua_gettop(l) > 0) input::keyboard(lua_toboolean(l, 1), luaL_optstring(l, 2, "text"));
@@ -1259,6 +1282,8 @@ bool load(const std::string& dir, const std::string& saveFile) {
     stepOnce = wantHud = false;
 
     L = luaL_newstate();
+    lua_sethook(L, count_ops, LUA_MASKCOUNT, OPS_STEP);
+    luaOps = lastFrameOps = 0;
     const luaL_Reg libs[] = {{"_G", luaopen_base}, {"table", luaopen_table}, {"string", luaopen_string},
                              {"math", luaopen_math}, {"utf8", luaopen_utf8}, {"coroutine", luaopen_coroutine}};
     for (const luaL_Reg& lib : libs) {
@@ -1301,7 +1326,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
                                        {"screen", l_mocap_screen}, {"video", l_mocap_video}, {nullptr, nullptr}};
     const luaL_Reg saveFunctions[] = {{"get", l_save_get}, {"set", l_save_set}, {nullptr, nullptr}};
     const luaL_Reg sysFunctions[] = {{"time", l_time}, {"real_time", l_real_time}, {"time_scale", l_time_scale}, {"step", l_step},
-                                     {"hud", l_hud}, {"stats", l_stats}, {"platform", l_platform}, {nullptr, nullptr}};
+                                     {"hud", l_hud}, {"stats", l_stats}, {"budget", l_budget}, {"platform", l_platform}, {nullptr, nullptr}};
     register_table("gfx", gfxFunctions);
     register_table("model", modelFunctions);
     register_table("phys", physFunctions);
@@ -1355,6 +1380,8 @@ void unload() {
 void update(float dt) {
     if (!L) return;
     lastDt = dt;
+    lastFrameOps = luaOps;   // update, then draw, is one frame
+    luaOps = 0;
     // What the player typed, then the answers to web requests, before the game's own update.
     std::string text;
     bool isKey = false;

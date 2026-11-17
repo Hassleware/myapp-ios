@@ -574,4 +574,13 @@ void release(bool everything) {
     }
 }
 
+int animation_bytes() {
+    size_t numbers = 0;
+    models.each([&](Handle, Model& m) {
+        for (const Clip& c : m.clips)
+            for (const Channel& ch : c.channels) numbers += ch.times.size() + ch.values.size();
+    });
+    return (int)(numbers * 2);
+}
+
 }  // namespace model

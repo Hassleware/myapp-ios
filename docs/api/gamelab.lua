@@ -502,6 +502,10 @@ function sys.hud(on) end
 --- The numbers behind the HUD.
 function sys.stats() end
 
+--- `sys.budget() -> table`
+--- What the game is using, to hold it to a budget: triangles and lua_ops (Lua instructions) for the last frame, lua_ops_now so far this frame (to time a piece of code); texels and largest_texture of its own textures (a font counts only the glyphs drawn so far); mesh_vertices, mesh_triangles; animation_bytes (at 16 bits a number); lua_kb (its Lua heap).
+function sys.budget() end
+
 --- `sys.platform() -> "ios" | "pc"`
 --- Where the game is running.
 function sys.platform() end

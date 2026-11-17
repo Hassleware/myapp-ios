@@ -130,7 +130,7 @@ mocap.start()  mocap.pose() -> tracked, positions, parents  mocap.record(on)  mo
 -- everything else
 save.get(key, default)      save.set(key, value)
 sys.time()                  sys.real_time()          sys.time_scale([scale])   -- 0 stops the game, 0.3 is slow motion
-sys.step()                  sys.hud(bool)            sys.stats() -> fps, draws, vertices, sounds      sys.platform() -> "ios" | "pc"
+sys.step()                  sys.hud(bool)            sys.stats() -> fps, draws, vertices, sounds      sys.budget() -> table      sys.platform() -> "ios" | "pc"
 include("other.lua")        print(...)   -- prints show in the dev.py window, from the phone too
 ```
 

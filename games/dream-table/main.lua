@@ -17,6 +17,7 @@
 
 local lib = include("lib.lua")
 local scenery = include("scenery.lua")
+budget = include("budget.lua")   -- global, so `lua budget.report()` works from dev.py
 
 -- The real table, in metres: 2.74 long (along z), 1.525 wide, 0.76 high, net 15.25 cm.
 local TABLE_Y, HALF_W, HALF_L, NET_TOP = 0.76, 0.7625, 1.37, 0.76 + 0.1525
@@ -46,6 +47,34 @@ do
     end
   end
   trail_mesh = gfx.new_mesh(numbers, indices, "pnu")
+end
+
+-- The ball (60 triangles: at 4 cm nobody sees more) and its shadow (a 10-sided disc), one unit across.
+local ball_mesh, disc_mesh
+do
+  local n, idx, RINGS, SEGS = {}, {}, 5, 6
+  for r = 0, RINGS do
+    for sgm = 0, SEGS do
+      local phi, th = math.pi * r / RINGS, math.pi * 2 * sgm / SEGS
+      local x, y, z = math.sin(phi) * math.cos(th), math.cos(phi), math.sin(phi) * math.sin(th)
+      for _, v in ipairs({ x * 0.5, y * 0.5, z * 0.5, x, y, z, 0, 0 }) do n[#n + 1] = v end
+    end
+  end
+  for r = 0, RINGS - 1 do
+    for sgm = 0, SEGS - 1 do
+      local a = r * (SEGS + 1) + sgm + 1
+      local b = a + SEGS + 1
+      for _, v in ipairs({ a, a + 1, b, a + 1, b + 1, b }) do idx[#idx + 1] = v end
+    end
+  end
+  ball_mesh = gfx.new_mesh(n, idx, "pnu")
+  n, idx = { 0, 0, 0, 0, 1, 0, 0, 0 }, {}
+  for k = 0, 9 do
+    local a = -k / 10 * math.pi * 2
+    for _, v in ipairs({ math.cos(a) * 0.5, 0, math.sin(a) * 0.5, 0, 1, 0, 0, 0 }) do n[#n + 1] = v end
+    for _, v in ipairs({ 1, 2 + k, 2 + (k + 1) % 10 }) do idx[#idx + 1] = v end
+  end
+  disc_mesh = gfx.new_mesh(n, idx, "pnu")
 end
 
 -- state: "serve" (someone holds the ball), "toss" (a serve in the air), "rally", "point" (a short pause), "over"
@@ -286,25 +315,48 @@ local function flight(m, serving)
     end
     if y < R or own >= 2 then break end
     local hittable = serving and (vy < 0 and own == 0) or (not serving and own == 1 and z * m.sign > HALF_L - 0.2)
-    if hittable and step % 2 == 0 then out[#out + 1] = { x = x, y = y, z = z, t = step * dt } end
+    -- every 1/20 s and only at heights a bat can reach: the move search is costly (budget.lua)
+    if hittable and step % 6 == 0 and y > 0.3 and y < 2.2 then out[#out + 1] = { x = x, y = y, z = z, t = step * dt } end
   end
   return out
 end
 
--- Picks the best (move, point) by cost(move, point, sink, run); then starts it.
-local function choose_and_swing(m, points, cost_of)
+-- Plans are coroutines, spread over a few fixed steps (PLAN_SLICE moves tried per step) so no frame goes over the
+-- Lua budget (budget.lua). start_plan replaces any plan in progress; run_plans moves them on each fixed step and
+-- calls done(result) when one finishes.
+local PLAN_SLICE = 8
+local plans = {}
+local function start_plan(m, fn, done) plans[m] = { co = coroutine.create(fn), done = done } end
+local function run_plans(dt)
+  for m, p in pairs(plans) do
+    local ok, result = coroutine.resume(p.co, dt)
+    if not ok then plans[m] = nil error(result) end
+    if coroutine.status(p.co) == "dead" then
+      plans[m] = nil
+      if p.done then p.done(result) end
+    end
+  end
+end
+
+-- Picks the best (move, point) by cost(move, point, sink, run, blade offset); then starts it. The blade's offset
+-- is worked out once per move, not per point: this search is the game's biggest piece of Lua work (budget.lua).
+local function choose_and_swing(m, points, cost_of, hand)
   local best, at, best_cost, best_sink = nil, nil, math.huge, 0
-  for _, move in ipairs(moves) do
+  local waited = 0                                               -- seconds spent planning, over several steps
+  for i, move in ipairs(moves) do
+    if i % PLAN_SLICE == 0 and coroutine.isyieldable() then waited = waited + coroutine.yield() end
+    if hand and move.hand ~= hand then goto next_move end   -- a serve is with one given hand
     local off = blade_offset(m, move)
     for _, p in ipairs(points) do
       local sx, sz = p.x - off[1], p.z - off[3]                  -- where the body would stand
-      if sz * m.sign > HALF_L + 0.2 and p.t > 0.3 then           -- behind the table, with time to swing
+      if sz * m.sign > HALF_L + 0.2 and p.t - waited > 0.3 then           -- behind the table, with time to swing
         local run = math.sqrt((sx - m.body.x) ^ 2 + (sz - m.body.z) ^ 2)
         local sink = math.max(-CROUCH, math.min(0, p.y - off[2]))   -- crouch for a ball below the shot's height
-        local cost = cost_of(move, p, sink, run)
+        local cost = cost_of(move, p, sink, run, off)
         if cost and cost < best_cost then best, at, best_cost, best_sink = move, p, cost, sink end
       end
     end
+    ::next_move::
   end
   if not best then return false end
   m.used[best] = (m.used[best] or 0) + 1
@@ -313,26 +365,26 @@ local function choose_and_swing(m, points, cost_of)
   local off = blade_offset(m, best)
   m.body.tx, m.body.tz, m.body.ty = at.x - off[1], at.z - off[3], best_sink
   m.anim.layers = {}
-  m.anim:play(best.clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - at.t),
-                           speed = at.t > CONTACT and CONTACT / at.t or 1 })
+  local t = at.t - waited                                         -- from now, after the time spent planning
+  m.anim:play(best.clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - t),
+                           speed = t > CONTACT and CONTACT / t or 1 })
   return true
 end
 
 -- The robot's choice: the height should suit the shot, it shouldn't run far, and it likes variety.
 local function plan_robot(m, serve_hand)
-  return choose_and_swing(m, flight(m, serve_hand ~= nil), function(move, p, sink, run)
-    if serve_hand and move.hand ~= serve_hand then return nil end
-    return math.abs(p.y - blade_offset(m, move)[2] - sink) * 3 - sink * 0.3 + run * (serve_hand and 1.5 or 0.3)
+  return choose_and_swing(m, flight(m, serve_hand ~= nil), function(move, p, sink, run, off)
+    return math.abs(p.y - off[2] - sink) * 3 - sink * 0.3 + run * (serve_hand and 1.5 or 0.3)
            + (m.used[move] or 0) * 0.35 + math.random() * 0.05
-  end)
+  end, serve_hand)
 end
 
 -- Your choice, from the line you drew: the move whose recorded swing runs most like the line, that can meet the
 -- ball without much running.
 local function plan_line(m, line, serving)
-  return choose_and_swing(m, flight(m, serving), function(move, p, sink, run)
+  return choose_and_swing(m, flight(m, serving), function(move, p, sink, run, off)
     local likeness = move.swing[1] * line.right + move.swing[2] * line.up   -- 1: the same direction
-    return (1 - likeness) * 2.5 + math.abs(p.y - blade_offset(m, move)[2] - sink) * 3 - sink * 0.3 + run * 0.8
+    return (1 - likeness) * 2.5 + math.abs(p.y - off[2] - sink) * 3 - sink * 0.3 + run * 0.8
   end)
 end
 
@@ -587,8 +639,8 @@ local function follow_camera(dt)
   cam.back = lib.approach(cam.back, you.body.z - home, 4, dt)
 end
 local function camera()
-  gfx.camera(cam.x, CAM_HEIGHT + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK,
-             cam.x * 0.7, CAM_LOOK, -0.2 + cam.back * 0.2, 50)
+  cam.ex, cam.ey, cam.ez = cam.x, CAM_HEIGHT + cam.back * CAM_UP, 6.0 + cam.back * CAM_BACK
+  gfx.camera(cam.ex, cam.ey, cam.ez, cam.x * 0.7, CAM_LOOK, -0.2 + cam.back * 0.2, 50)
 end
 
 -- ---------------------------------------------------------------- shots
@@ -691,6 +743,7 @@ local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
   you.armed, robot.armed, you.pending = false, false, nil
+  plans = {}
   trail = {}
 end
 
@@ -841,7 +894,7 @@ local function swing_from(line)
   elseif state == "rally" then
     you.aim = line
     if last == "cpu" then
-      if not plan_line(you, line, false) then you.pending = line end
+      start_plan(you, function() return plan_line(you, line, false) end, function(ok) if not ok then you.pending = line end end)
     else
       you.pending = line                      -- drawn early: it's played as soon as the robot has hit
     end
@@ -917,13 +970,18 @@ end
 -- ---------------------------------------------------------------- each frame
 
 function fixed_update(dt)
+  run_plans(dt)
   -- The robot plans as soon as you hit; your line drawn early is played as soon as the robot hits.
   if state == "rally" and last == "player" and robot.body.plan_for ~= bounces then
     robot.body.plan_for = bounces
-    plan_robot(robot)
+    start_plan(robot, function() return plan_robot(robot) end)
   end
   if state == "rally" and last == "cpu" and you.pending then
-    if plan_line(you, you.pending, false) then you.pending = nil end
+    if not plans[you] then
+      local line = you.pending
+      you.pending = nil
+      start_plan(you, function() return plan_line(you, line, false) end, function(ok) if not ok and not you.pending then you.pending = line end end)
+    end
   end
   walk(robot, dt)
   walk(you, dt)
@@ -939,6 +997,7 @@ function fixed_update(dt)
 end
 
 function update(dt)
+  budget.update()
   lib.update(dt)
   pose(robot, dt)
   pose(you, dt)
@@ -954,7 +1013,7 @@ function update(dt)
     -- The robot's flick: the ball hops up off the bat, and the swing is planned onto it as it falls.
     state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
     ball.vx, ball.vy, ball.vz = 0, TOSS, 0
-    plan_robot(robot, robot.serve_hand)
+    start_plan(robot, function() return plan_robot(robot, robot.serve_hand) end)
   elseif state == "point" and timer <= 0 then
     start_serve()
   end
@@ -974,9 +1033,8 @@ end
 -- Text with a black outline: the words drawn in black around it, then in colour on top.
 local OUTLINE = 2   -- outline thickness, in 2D units
 local function text(s, x, y, size, r, g, b, a)
-  for k = 0, 7 do
-    local angle = k / 8 * math.pi * 2
-    gfx.text(s, x + math.cos(angle) * OUTLINE, y + math.sin(angle) * OUTLINE, size, 0, 0, 0, a or 1)
+  for k = 0, 3 do   -- four diagonal copies: enough for a clean outline, and cheap (budget.lua)
+    gfx.text(s, x + (k % 2 * 2 - 1) * OUTLINE, y + (k // 2 * 2 - 1) * OUTLINE, size, 0, 0, 0, a or 1)
   end
   gfx.text(s, x, y, size, r, g, b, a)
 end
@@ -985,10 +1043,26 @@ function draw()
   gfx.clear(scenery.FOG[1], scenery.FOG[2], scenery.FOG[3])
   camera()
   scenery.lights()
-  gfx.shadows(0, TABLE_Y, 0.4, 3.0, 0.65)
-
   -- The world (sky, cloud island, cobbles, beanstalks), then the table, lines, legs.
-  scenery.draw(sys.real_time())
+  scenery.draw(sys.real_time(), cam.ex, cam.ey, cam.ez)
+
+  -- Blob shadows, as a PS1 game would have them: soft dark shapes on the ground under the table, each body and
+  -- each planted foot. A real shadow map would draw everything twice (budget.lua).
+  gfx.unlit(true)
+  gfx.blend("alpha")
+  gfx.depth(true, false)
+  gfx.cull(false)
+  gfx.cube(-0.2, 0.004, 0, HALF_W * 2 + 0.1, 0.001, HALF_L * 2 + 0.1, 0.05, 0.08, 0.2, 0, 0.45)
+  for _, m in ipairs({ robot, you }) do
+    gfx.draw(disc_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.7, 1, 0.5, 0.05, 0.08, 0.2, 0.45 / (1 + m.body.air * 2))
+    for _, leg in ipairs(m.legs) do
+      if leg.plant then gfx.draw(disc_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.22, 1, 0.3, 0.05, 0.08, 0.2, 0.45) end
+    end
+  end
+  gfx.cull(true)
+  gfx.depth(true, true)
+  gfx.blend("opaque")
+  gfx.unlit(false)
   gfx.cube(0, TABLE_Y - 0.015, 0, HALF_W * 2, 0.03, HALF_L * 2, 0.16, 0.22, 0.62)
   local ly = TABLE_Y + 0.001
   for _, sx in ipairs({ -1, 1 }) do
@@ -1011,22 +1085,24 @@ function draw()
 
   -- The ball: a real lit ball, its shadow straight below it on the table or the floor (always, so you can read
   -- where it is), and the bursts where bat meets ball.
-  gfx.sphere(ball.x, ball.y, ball.z, R * 2, 1.0, 0.93, 0.8)
+  gfx.draw(ball_mesh, ball.x, ball.y, ball.z, 0, 0, 0, 1, R * 2, R * 2, R * 2, 1.0, 0.93, 0.8, 1)
   local over = math.abs(ball.x) <= HALF_W and math.abs(ball.z) <= HALF_L and ball.y >= TABLE_Y
   local floor = over and TABLE_Y + 0.003 or 0.003
   local size = R * 3.2 / (1 + (ball.y - floor) * 0.4)
   gfx.unlit(true)
   gfx.blend("alpha")
-  gfx.draw(gfx.SPHERE, ball.x, floor, ball.z, 0, 0, 0, 1, size, 0.002, size, 0, 0, 0, 0.75)
+  gfx.draw(disc_mesh, ball.x, floor, ball.z, 0, 0, 0, 1, size, 1, size, 0, 0, 0, 0.75)
+  local sparks = {}   -- the bursts: square sparks flying out, and a flash (two triangles each)
   for _, e in ipairs(effects) do
     local age = e.t / 0.3
     local ring = 0.04 + 0.22 * age
     for k = 0, 11 do
       local a = k / 12 * math.pi * 2
-      gfx.sphere(e.x + math.cos(a) * ring, e.y + math.sin(a) * ring, e.z, 0.024 * (1 - age), 1, 0.9, 0.5, 1 - age)
+      for _, v in ipairs({ e.x + math.cos(a) * ring, e.y + math.sin(a) * ring, e.z, 0.03 * (1 - age), 1, 0.9, 0.5, 1 - age }) do sparks[#sparks + 1] = v end
     end
-    gfx.sphere(e.x, e.y, e.z, 0.16 * (1 - age), 1, 1, 0.85, 0.7 * (1 - age))
+    for _, v in ipairs({ e.x, e.y, e.z, 0.16 * (1 - age), 1, 1, 0.85, 0.7 * (1 - age) }) do sparks[#sparks + 1] = v end
   end
+  if #sparks > 0 then gfx.particles(sparks) end
   gfx.blend("opaque")
   gfx.unlit(false)
 
@@ -1052,8 +1128,8 @@ function draw()
   local function dots(l, alpha)
     for i = 2, #l do
       local a, b = l[i - 1], l[i]
-      local n = math.max(1, math.floor(math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) / 6))
-      for k = 0, n - 1 do gfx.circle(a[1] + (b[1] - a[1]) * k / n, a[2] + (b[2] - a[2]) * k / n, 6, 1, 0.75, 0.9, alpha) end
+      local n = math.max(1, math.floor(math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) / 9))
+      for k = 0, n - 1 do gfx.rect(a[1] + (b[1] - a[1]) * k / n - 5, a[2] + (b[2] - a[2]) * k / n - 5, 10, 10, 1, 0.75, 0.9, alpha) end
     end
   end
   for _, l in pairs(lines) do dots(l, 0.9) end
@@ -1081,4 +1157,5 @@ function draw()
   local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
   text(walk_hint, w * 0.25 - gfx.text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
   text(swing_hint, w * 0.75 - gfx.text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  budget.draw(left + 16, top + 100)
 end

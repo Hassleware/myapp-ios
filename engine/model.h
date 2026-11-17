@@ -57,4 +57,7 @@ void to_trs(const float m[16], float t[3], float r[4], float s[3]);
 // Called when a game is reloaded or closed. Models whose files have not changed are kept on a reload.
 void release(bool everything);
 
+// The bytes the loaded models' animations would take as 16-bit numbers (as a PS1 game would store them).
+int animation_bytes();
+
 }  // namespace model

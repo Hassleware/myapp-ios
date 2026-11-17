@@ -30,8 +30,15 @@ struct MeshData {
 };
 
 struct Stats {
-    int draws = 0, vertices = 0, textures = 0, meshes = 0;
+    int draws = 0, vertices = 0, textures = 0, meshes = 0, triangles = 0;
 };
+
+// What the running game itself has loaded or made (the engine's own things left out), for budgets such as
+// "fits a PS1". Font atlases count only the part glyphs fill; textures count their top level only.
+struct Usage {
+    int texels = 0, largestTexture = 0, meshVertices = 0, meshTriangles = 0;
+};
+Usage usage();
 
 bool init(SDL_Window* window, const std::string& engineShaderDir, std::string& error);
 void shutdown();

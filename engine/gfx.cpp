@@ -1237,6 +1237,7 @@ void run_draws(const std::vector<Draw>& list, bool shadow, VkPipeline& boundPipe
         }
         nowStats.draws++;
         nowStats.vertices += (int)d.count;
+        nowStats.triangles += (int)d.count / 3;
     }
 }
 
@@ -2349,6 +2350,27 @@ float text_width(const std::string& s, float size) {
 
 const std::string& shader_error() { return shaderProblem; }
 Stats stats() { return lastStats; }
+
+Usage usage() {
+    Usage u;
+    std::vector<Handle> atlases;
+    fonts.each([&](Handle, Font& f) {
+        if (f.engine) return;
+        atlases.push_back(f.atlas);
+        u.texels += f.penY * ATLAS_SIZE + f.rowH * f.penX;   // the rows glyphs have filled
+    });
+    textures.each([&](Handle h, Texture& t) {
+        if (t.owner == OWNER_ENGINE || std::find(atlases.begin(), atlases.end(), h) != atlases.end()) return;
+        u.texels += t.w * t.h;
+        u.largestTexture = SDL_max(u.largestTexture, SDL_max(t.w, t.h));
+    });
+    meshes.each([&](Handle, MeshRes& m) {
+        if (m.owner == OWNER_ENGINE) return;
+        u.meshVertices += (int)m.data.vertices.size();
+        u.meshTriangles += (int)m.data.indices.size() / 3;
+    });
+    return u;
+}
 
 #if defined(GFX_SCREENSHOT)
 // Debugging aid, off by default: saves the frame that was just drawn as a BMP file.
