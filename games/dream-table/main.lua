@@ -131,6 +131,8 @@ local JUMP_COST, DASH_COST = 0.35, 0.25   -- planning: how much a swing that nee
 local SKY_CHANCE, WIDE_CHANCE = 0.25, 0.25   -- the robot's fantasy returns: a sky ball (jump!) or a wide ball (dash!)
 local WIDE_CURVE, WIDE_KICK = 4.0, 1.0   -- a wide ball's sidespin: it curves sideways this hard all the way (m/s^2),
                                          -- and kicks a little more off its bounce (m/s)
+local BRAKE_START, BRAKE_TIME, BRAKE_ANGLE = 0.4, 0.25, math.rad(55)   -- a dash's retro-burn: from 60% through it,
+                                     -- lasting this long after, the hips turned this far
 local HOVER_MAX = 2.0                -- a jump can be held in the air (a hold on the right side) this long, at most
 local LEAN_PER_SPEED, LEAN_MOST = math.rad(4), math.rad(30)   -- tilt toward where it's going: per m/s, and at most
 local LEAN_EASE = 10                 -- how quickly the tilt follows (bigger is quicker); it eases back upright
@@ -640,14 +642,50 @@ local function pose(m, dt)
   end
   b.px, b.pz = b.x, b.z
   local speed = math.sqrt(b.lvx ^ 2 + b.lvz ^ 2)
-  local tilt = roll
+  -- The lean, as a tilt over the floor (direction times angle): toward where it's going...
+  local lx, lz = 0, 0
   if speed > 0.01 then
-    local angle = math.min(LEAN_MOST, speed * LEAN_PER_SPEED) / 2
-    local ax, az = b.lvz / speed, -b.lvx / speed                -- up x direction: turning about it tips up that way
-    tilt = qmul({ ax * math.sin(angle), 0, az * math.sin(angle), math.cos(angle) }, roll)
+    local angle = math.min(LEAN_MOST, speed * LEAN_PER_SPEED)
+    lx, lz = b.lvx / speed * angle, b.lvz / speed * angle
+  end
+  -- The retro-burn's weight: over a dash's last BRAKE_START of it and BRAKE_TIME after (the hips turn below).
+  local brake = 0
+  if b.dash then
+    brake = math.max(0, (b.dash.t / b.dash.time - (1 - BRAKE_START)) / BRAKE_START)
+  elseif b.brake then
+    b.brake.t = b.brake.t + dt
+    brake = math.max(0, 1 - b.brake.t / BRAKE_TIME)
+    if brake == 0 then b.brake = nil end
+  end
+  local bd = b.dash or b.brake
+  local w = brake * brake * (3 - 2 * brake)
+  local tilt = roll
+  local angle = math.sqrt(lx * lx + lz * lz)
+  if angle > 1e-4 then
+    local ax, az = lz / angle, -lx / angle                    -- up x direction: turning about it tips up that way
+    tilt = qmul({ ax * math.sin(angle / 2), 0, az * math.sin(angle / 2), math.cos(angle / 2) }, roll)
   end
   b.turn = qmul(tilt, b.base)
   b.pivot = sub(v(0, 0.9, 0), rot(tilt, v(0, 0.9, 0)))           -- tip about the hips, not the floor
+  -- The retro-burn turns the hips alone: their bottom (and the jet under them) swings toward the dash, blasting
+  -- the way it was going to stop it, while the spine is given back its turn so the chest, arms and head stay put.
+  b.hip_tilt = nil
+  if w > 0 and bd then
+    local dir = rot(qinv(b.turn), v(bd.x, 0, bd.z))           -- the dash's direction inside the model
+    local kl = math.sqrt(dir[1] * dir[1] + dir[3] * dir[3])
+    if kl > 1e-4 then
+      local h = BRAKE_ANGLE * w / 2
+      local qh = { -dir[3] / kl * math.sin(h), 0, dir[1] / kl * math.sin(h), math.cos(h) }   -- turns down toward dir
+      local a = m.anim.animator
+      local _, hips_turn = joint("hips", a)
+      local _, spine_turn = joint("spine", a)
+      local new_hips = qmul(qh, hips_turn)
+      set_turn("hips", select(2, joint(hips_parent, a)), new_hips, a)
+      set_turn("spine", new_hips, spine_turn, a)
+      b.hip_tilt = qh
+      b.flare = math.max(b.flare, FLARE_TIME * 0.8 * w)
+    end
+  end
   for _, thigh in ipairs(m.legs) do                   -- no legs: a jet torso (the leg bones shrunk to nothing)
     local t1, t2, t3, q1, q2, q3, q4 = model["local"](dummy, m.anim.animator, thigh)
     model["local"](dummy, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
@@ -710,7 +748,7 @@ local function walk(m, dt)
     b.z = m.sign * lib.clamp(m.sign * (b.z + d.z * step), HALF_L + 0.25, HALF_L + 1.8)
     b.tx, b.tz = b.x, b.z
     if d.t >= d.time then
-      b.dash = nil
+      b.dash, b.brake = nil, { x = d.x, z = d.z, t = 0 }    -- the retro-burn carries on a moment (pose)
       if b.goal then b.tx, b.tz = b.goal[1], b.goal[2] end   -- a plan's spot: walk the rest of the way
     end
   end
@@ -861,7 +899,7 @@ local FLARE = { { 0.75, 0.92, 1 }, { 0.15, 0.45, 1 }, { 0.05, 0.12, 0.8 } }
 local function flame(m, out, time)
   local b = m.body
   local base = to_world(m, (joint("hips", m.anim.animator)))
-  local down = rot(b.turn, v(0, -1, 0))
+  local down = rot(qmul(b.turn, b.hip_tilt or { 0, 0, 0, 1 }), v(0, -1, 0))   -- out of the hips, as they're turned
   local k = b.flare / FLARE_TIME
   k = k * k
   local length = FLAME_LENGTH * (1 + 1.4 * k) * (0.85 + 0.15 * math.sin(time * 41 + b.x * 7))
