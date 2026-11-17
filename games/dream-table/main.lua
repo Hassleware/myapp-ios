@@ -162,6 +162,7 @@ local TOSS = 2.6                     -- how fast the robot's flick sends the bal
 local SERVE_REACH = 0.8               -- a late serve swing: the torso glides this far into place, however short the time
 local SERVE_LAST = 0.75               -- the star lands when the ball has fallen to this far above where it was tossed:
                                      -- the last moment a swing still meets it cleanly (about 0.65 s after the toss)
+local SERVE_PERFECT, SERVE_GOOD = 0.4, 0.25   -- serve ratings: the star's last 40% is perfect, after 25% good
 local SERVE_LEAD = 0.1                -- your serve may start its swing part-way through: in time until the star lands
 local SERVE_TOSS = 3.0               -- your toss (m/s): with TOSS_G it rises for a second, filling the meter
 local TOSS_G = 3.0                   -- a tossed ball floats (gravity until it's hit): the star falls slowly enough to time
@@ -507,6 +508,7 @@ end
 -- Hints, once the robot has hit: where to stand for the cleanest return, and whether it calls for a jump (and
 -- when) or a dash (and which way). Worked out like your own swing would be, without making it.
 local hint = nil
+local CUE_REACT, SWING_CUE = 0.35, 0.4   -- seconds: a beat to react before a dash; draw the swing this long before contact
 local function start_hint()
   hint = nil
   if you.pending then return end          -- your swing is already waiting: it plans this itself (and twice the search
@@ -517,6 +519,13 @@ local function start_hint()
     if not r then return end
     local now = sys.time()
     hint = { x = r.x, z = r.z, how = r.how, dash = r.dash, jump_at = r.delay and now + r.delay, contact_at = now + r.contact }
+    -- The moments to act, in order: dash soon (a beat to react), the jump when the plan would, and the swing line
+    -- by SWING_CUE before contact (the swing needs that long to wind up).
+    hint.moves = {}
+    if r.dash then hint.moves[#hint.moves + 1] = { at = now + CUE_REACT, kind = "dash" } end
+    if r.how == "jump" and r.delay then hint.moves[#hint.moves + 1] = { at = now + r.delay, kind = "jump" } end
+    hint.moves[#hint.moves + 1] = { at = math.max(now + CUE_REACT, now + r.contact - SWING_CUE), kind = "swing" }
+    table.sort(hint.moves, function(a, b) return a.at < b.at end)
   end)
 end
 
@@ -760,6 +769,14 @@ local function draw_meter(tex, w, h, right, now, dt)
     local glow = METER_W * 3.2
     gfx.image(tex, x - glow / 2, y0 - glow * 0.25, glow, glow * 0.6, 1, 0.5, 0.8, (0.25 + 0.15 * math.sin(now * 10)) * a)
   end
+  -- The perfect zone: a pink bracket beside the stretch where the star's last SERVE_PERFECT falls.
+  local zy = y0 + METER_W / 2 + (1 - SERVE_PERFECT) * (METER_H - METER_W)
+  local zb = y0 + METER_H - METER_W / 2
+  local bx = x - METER_W / 2 - 14
+  gfx.rect(bx, zy - 3, 6, zb - zy + 6, 0.12, 0.05, 0.12, 0.6 * a)                -- a dark edge, so it reads on cloud
+  gfx.rect(bx + 1, zy - 2, 4, zb - zy + 4, 1, 0.4, 0.8, a)
+  gfx.rect(bx + 1, zy - 2, 12, 4, 1, 0.4, 0.8, a)
+  gfx.rect(bx + 1, zb - 2, 12, 4, 1, 0.4, 0.8, a)
   -- The star: from the top once the ball turns over, down to the bottom at the last moment to swing.
   if state == "toss" and ball.vy <= 0 and you.toss_y then
     local sy = y0 + METER_W / 2 + serve_star() * (METER_H - METER_W)
@@ -776,10 +793,10 @@ local function draw_meter(tex, w, h, right, now, dt)
   end
 end
 
--- The serve's rating, popping up in your font when the serve is hit (or missed): Perfect (pink) for a full charge
--- swung late, while the star is in the lower SERVE_PERFECT of the capsule; Good (gold) from 60% charge; Okay
--- (green) otherwise; Fail (dark grey) for a missed serve.
-local SERVE_PERFECT = 0.4
+-- The serve's rating, popping up in your font when the serve is hit (or missed). It's the timing only: the charge
+-- is the serve's speed and distance, not its rating. Perfect (pink): swung while the star is in the lower
+-- SERVE_PERFECT of its fall (marked on the capsule); Good (gold): after it's fallen SERVE_GOOD; Okay (green): earlier;
+-- Fail (dark grey): a missed serve.
 local RATINGS = { perfect = { "Perfect!", 1, 0.45, 0.8 }, good = { "Good", 1, 0.8, 0.2 },
                   okay = { "Okay", 0.35, 0.85, 0.35 }, fail = { "Fail", 0.3, 0.3, 0.33 } }
 local rating = nil                                   -- { kind, t }
@@ -1137,8 +1154,8 @@ local function swing_from(line)
   elseif state == "toss" and server == "player" and not you.armed and not plans[you] then
     -- Second line: the swing, planned onto the falling ball like any return; the charge now sets its power.
     you.aim, you.serve_power = line, math.max(0.25, serve_charge())
-    you.serve_rating = (serve_charge() >= 0.999 and serve_star() >= 1 - SERVE_PERFECT) and "perfect"
-                       or (serve_charge() >= 0.6 and "good" or "okay")
+    local star = serve_star()
+    you.serve_rating = star >= 1 - SERVE_PERFECT and "perfect" or (star >= SERVE_GOOD and "good" or "okay")
     start_plan(you, function() return plan_line(you, line, true) end)
   elseif state == "rally" then
     you.aim = line
@@ -1300,19 +1317,13 @@ function draw()
   for _, m in ipairs({ robot, you }) do
     gfx.draw(blob_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.9, 1, 0.7, 0.1, 0.14, 0.35, 0.45 / (1 + m.body.air * 2))
   end
-  -- Where to stand: a glowing spot on the floor (pink once you're on it), a ring of lights closing on it as the
-  -- ball arrives.
+  -- Where to stand: a glowing spot on the floor (pink once you're on it).
   if hint and state == "rally" and last == "cpu" then
     local now = sys.time()
     local on = math.sqrt((you.body.x - hint.x) ^ 2 + (you.body.z - hint.z) ^ 2) < 0.15
     local r, g, bl = 1, on and 0.45 or 0.85, on and 0.8 or 0.25
     local pulse = 0.85 + 0.15 * math.sin(now * 12)
     gfx.draw(blob_mesh, hint.x, 0.012, hint.z, 0, 0, 0, 1, 0.6 * pulse, 1, 0.6 * pulse, r, g, bl, 0.85)
-    local ring = 0.3 + math.min(0.8, math.max(0, hint.contact_at - now) * 0.9)
-    for k = 0, 11 do
-      local a = k / 12 * math.pi * 2 + now * 2
-      gfx.draw(blob_mesh, hint.x + math.cos(a) * ring, 0.013, hint.z + math.sin(a) * ring, 0, 0, 0, 1, 0.12, 1, 0.12, r, g, bl, 0.9)
-    end
   end
   gfx.texture(1, nil)
   gfx.cull(true)
@@ -1437,29 +1448,44 @@ function draw()
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
     text(words(message), (w - text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
-  -- When to jump: a ring of lights closing on your torso, then "Jump!" on the frame to go. Which way to dash.
-  if hint and state == "rally" and last == "cpu" then
-    local now = sys.time()
-    local sx, sy = gfx.project(you.body.x, height(you) + 1.1, you.body.z)
-    if hint.how == "jump" and hint.jump_at and sx and not (you.body.chart and not recovering(you.body)) then
-      local wait = hint.jump_at - now
-      if wait > 0.12 then
-        local rr = 40 + wait * 160
-        for k = 0, 15 do
-          local a = k / 16 * math.pi * 2
-          gfx.image(blob_tex, sx + math.cos(a) * rr - 7, sy + math.sin(a) * rr - 7, 14, 14, 0.5, 0.9, 1, 0.9)
-        end
-        text("Jump", sx - text_width("Jump", 24) / 2, sy - rr - 34, 24, 0.6, 0.9, 1)
-      elseif wait > -0.15 then
-        local size = 64 + 20 * math.sin(now * 30)
-        text("Jump!", sx - text_width("Jump!", size) / 2, sy - 110, size, 0.5, 0.9, 1)
-      end
+  -- The next move and when: a fixed white target ring, and a coloured ring closing onto it. When they meet it's
+  -- the moment: the target turns green and says "Now!". One move at a time (dash, jump, swing), each dropped once
+  -- it's done.
+  if hint and hint.moves and state == "rally" and last == "cpu" then
+    local now, b = sys.time(), you.body
+    local done = {
+      dash = b.dash ~= nil or math.sqrt((b.x - hint.x) ^ 2 + (b.z - hint.z) ^ 2) < 0.3,
+      jump = b.chart ~= nil and not recovering(b),
+      swing = you.armed or you.pending ~= nil or plans[you] ~= nil,
+    }
+    local cue
+    for _, mv in ipairs(hint.moves) do
+      if not done[mv.kind] and now < mv.at + 0.2 then cue = mv break end
     end
-    local on = math.sqrt((you.body.x - hint.x) ^ 2 + (you.body.z - hint.z) ^ 2) < 0.3
-    if hint.dash and not on and not you.body.dash then
-      local word = hint.x < you.body.x and "<< Dash" or "Dash >>"
-      local size = 44 + 6 * math.sin(now * 16)
-      text(word, (w - text_width(word, size)) / 2, h * 0.62, size, 1, 0.6, 0.25)
+    if cue then
+      local CUES = { dash = { hint.x < b.x and "<< Dash" or "Dash >>", 1, 0.6, 0.25 }, jump = { "Jump", 0.4, 0.85, 1 },
+                     swing = { "Swing", 1, 0.45, 0.8 } }
+      local c = CUES[cue.kind]
+      local cx, cy, target = w / 2, h * 0.8, 44                -- below your mannequin
+      local left = cue.at - now
+      local ready = left <= 0.08                          -- the moment (and a little after)
+      for k = 0, 23 do                                    -- the target
+        local a = k / 24 * math.pi * 2
+        local col = ready and { 0.4, 1, 0.5 } or { 1, 1, 1 }
+        gfx.image(blob_tex, cx + math.cos(a) * target - 5, cy + math.sin(a) * target - 5, 10, 10, col[1], col[2], col[3], 0.9)
+      end
+      if not ready then                                   -- the closing ring: one second away is 180 units out
+        local rr = target + math.min(1.2, left) * 180
+        for k = 0, 23 do
+          local a = k / 24 * math.pi * 2
+          gfx.image(blob_tex, cx + math.cos(a) * rr - 8, cy + math.sin(a) * rr - 8, 16, 16, c[2], c[3], c[4], 0.95)
+        end
+        text(c[1], cx - text_width(c[1], 30) / 2, cy - 15, 30, c[2], c[3], c[4])
+      else
+        local size = 52 + 10 * math.sin(now * 30)
+        text("Now!", cx - text_width("Now!", size) / 2, cy - size / 2, size, 0.4, 1, 0.5)
+        text(c[1], cx - text_width(c[1], 26) / 2, cy + target + 12, 26, c[2], c[3], c[4])
+      end
     end
   end
   local frame_dt = math.min(0.1, sys.real_time() - (meter.at or sys.real_time()))
