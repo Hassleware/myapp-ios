@@ -163,7 +163,9 @@ local SERVE_REACH = 0.8               -- a late serve swing: the torso glides th
 local SERVE_LAST = 0.75               -- the star lands when the ball has fallen to this far above where it was tossed:
                                      -- the last moment a swing still meets it cleanly (about 0.65 s after the toss)
 local SERVE_LEAD = 0.1                -- your serve may start its swing part-way through: in time until the star lands
-local SERVE_TOSS = 3.6               -- your toss: higher, so there's time to charge and still swing (0.48 s up)
+local SERVE_TOSS = 3.0               -- your toss (m/s): with TOSS_G it rises for a second, filling the meter
+local TOSS_G = 3.0                   -- a tossed ball floats (gravity until it's hit): the star falls slowly enough to time
+local TOSS_LIFT, TOSS_LIFT_TIME = math.rad(55), 0.45   -- the serving arm follows the toss up this far, over this long
 local BLEND_TIME = 0.18              -- switching moves: every bone blends from the old pose over this long
 local moves, hands, bones, effects = {}, {}, {}, {}
 local rest = {}                      -- every bone's turn in the T-pose
@@ -353,7 +355,7 @@ local function flight(m, serving)
   local x, y, z, vx, vy, vz = ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz
   local own, dt, out = serving and 0 or (bounces[m.side] or 0), 1 / 120, {}
   for step = 1, 300 do
-    vy = vy - G * dt
+    vy = vy - (serving and state == "toss" and TOSS_G or G) * dt   -- a toss floats until it's hit
     x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
     if y - R <= TABLE_Y and vy < 0 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
       y, vy, vx, vz = TABLE_Y + R, -vy * BOUNCE, vx * 0.97, vz * 0.97
@@ -542,6 +544,16 @@ local function flat_bat(m, side, w)
   set_turn(hand.bone, select(2, joint("forearm." .. side, a)), new, a)
 end
 
+-- The toss's follow-through: the serving arm turns up from the shoulder by TOSS_LIFT times w (0 to 1), the hand
+-- rising in front of the body (about the model's side axis).
+local function lift_arm(m, side, w)
+  if w <= 0 then return end
+  local a = m.anim.animator
+  local _, turn = joint("upper_arm." .. side, a)
+  local h = -TOSS_LIFT * w / 2
+  set_turn("upper_arm." .. side, select(2, joint("shoulder." .. side, a)), qmul({ math.sin(h), 0, 0, math.cos(h) }, turn), a)
+end
+
 -- Where the top of a bat's blade is in the world, for the ball to rest on.
 local function on_bat(m, side)
   local b = to_world(m, blade_in_model(side, m.anim.animator))
@@ -589,7 +601,14 @@ local function pose(m, dt)
     local t1, t2, t3, q1, q2, q3, q4 = model["local"](dummy, m.anim.animator, thigh)
     model["local"](dummy, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
   end
-  local holding = state == "serve" and (server == "cpu") == (m == robot)
+  -- The toss: the serving arm lifts after the ball (up and back down over TOSS_LIFT_TIME), the bat kept flat.
+  local lift = 0
+  if m.lift_t then
+    m.lift_t = m.lift_t + dt
+    if m.lift_t >= TOSS_LIFT_TIME then m.lift_t = nil else lift = math.sin(math.pi * m.lift_t / TOSS_LIFT_TIME) end
+  end
+  lift_arm(m, m.serve_hand, lift)
+  local holding = (state == "serve" or m.lift_t) and (server == "cpu") == (m == robot)
   m.flat = lib.approach(m.flat or 0, holding and 1 or 0, 12, dt)   -- eases in and out: no snap at the toss
   flat_bat(m, m.serve_hand, m.flat)
   -- Where the bat meets the ball, for play: from the upright body (the lean and the flutter are looks only, and
@@ -697,7 +716,7 @@ local function draw_meter(tex, w, h, right, now, dt)
   end
   -- The star: from the top once the ball turns over, down to the bottom as it falls back to the bat.
   if state == "toss" and ball.vy <= 0 and you.toss_y then
-    local apex = you.toss_y + SERVE_TOSS * SERVE_TOSS / (2 * G)
+    local apex = you.toss_y + SERVE_TOSS * SERVE_TOSS / (2 * TOSS_G)
     meter.star = math.min(1, math.max(0, (apex - ball.y) / (apex - you.toss_y - SERVE_LAST)))
     local sy = y0 + meter.star * col_h
     for k = 1, 4 do                                    -- the sparkle trail above it
@@ -958,7 +977,7 @@ end
 
 local function step_ball(dt)
   local px, py, pz = ball.x, ball.y, ball.z
-  ball.vy = ball.vy - G * dt
+  ball.vy = ball.vy - (state == "toss" and TOSS_G or G) * dt   -- a tossed ball floats until it's hit
   ball.x, ball.y, ball.z = ball.x + ball.vx * dt, ball.y + ball.vy * dt, ball.z + ball.vz * dt
 
   -- The net: below its top, the ball stops and drops back.
@@ -1045,7 +1064,7 @@ local function swing_from(line)
     -- Your serve, first line: the toss. The ball pops up off your bat.
     state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
     ball.vx, ball.vy, ball.vz = 0, SERVE_TOSS, 0
-    you.armed, you.toss_y = false, ball.y
+    you.armed, you.toss_y, you.lift_t = false, ball.y, 0
   elseif state == "toss" and server == "player" and not you.armed and not plans[you] then
     -- Second line: the swing, planned onto the falling ball like any return; the charge now sets its power.
     you.aim, you.serve_power = line, math.max(0.25, serve_charge())
@@ -1171,6 +1190,7 @@ function update(dt)
     -- The robot's flick: the ball hops up off the bat, and the swing is planned onto it as it falls.
     state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
     ball.vx, ball.vy, ball.vz = 0, TOSS, 0
+    robot.lift_t = 0
     start_plan(robot, function() return plan_robot(robot, robot.serve_hand) end)
   elseif state == "point" and timer <= 0 then
     start_serve()
