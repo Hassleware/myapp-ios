@@ -131,6 +131,7 @@ local JUMP_COST, DASH_COST = 0.35, 0.25   -- planning: how much a swing that nee
 local SKY_CHANCE, WIDE_CHANCE = 0.25, 0.25   -- the robot's fantasy returns: a sky ball (jump!) or a wide ball (dash!)
 local WIDE_CURVE, WIDE_KICK = 4.0, 1.0   -- a wide ball's sidespin: it curves sideways this hard all the way (m/s^2),
                                          -- and kicks a little more off its bounce (m/s)
+local HOVER_MAX = 2.0                -- a jump can be held in the air (a hold on the right side) this long, at most
 local LEAN_PER_SPEED, LEAN_MOST = math.rad(4), math.rad(30)   -- tilt toward where it's going: per m/s, and at most
 local LEAN_EASE = 10                 -- how quickly the tilt follows (bigger is quicker); it eases back upright
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
@@ -377,7 +378,7 @@ local function recovering(b) return b.chart and math.floor(b.chart * chart.fps +
 local function chart_jump(m)
   local b = m.body
   if b.chart and not recovering(b) then return end
-  b.chart, b.flare = 0, FLARE_TIME                          -- in the recovery: jump again straight away
+  b.chart, b.flare, b.hover_t = 0, FLARE_TIME, 0           -- in the recovery: jump again straight away
 end
 
 -- A dash: a quick glide along the floor, direction (dx, dz) in the world, dist metres (DASH_DIST if not given),
@@ -448,7 +449,8 @@ local function choose_and_swing(m, points, cost_of, hand, lead, peek)
       if sz * m.sign > HALF_L + 0.2 and sz * m.sign < COURT_BACK and t > lead and math.abs(sx) <= COURT_X then   -- on court, in time
         local run = math.sqrt((sx - bx) ^ 2 + (sz - bz) ^ 2)
         local need = p.y - off[2]                                  -- how high the body must be at contact
-        local fc = f_now and f_now + math.floor(t * chart.fps + 0.5)
+        local still = b.hovering and math.max(0, HOVER_MAX - (b.hover_t or 0)) or 0   -- hovering: up there till let go
+        local fc = f_now and f_now + math.floor(math.max(0, t - still) * chart.fps + 0.5)
         if flying and chart.air[fc] then                                 -- already jumping, still up then
           local dash = false                                        -- in the air the jet drifts AIR_DRIFT to line up
           if run > AIR_DRIFT then dash = assist and dash_need(run, 0, t) or nil end
@@ -714,7 +716,15 @@ local function walk(m, dt)
   end
   if b.chart then                                     -- the charted jump: the height is read, not simulated
     local f = math.floor(b.chart * chart.fps + 0.5) + 1      -- this step's frame (fixed steps are 1/60 s)
-    b.chart = b.chart + dt
+    -- Held in the air: while b.hold (a finger held on the right side, or Space) and up off the ground, the chart
+    -- waits at this frame, up to HOVER_MAX a jump; let go and it carries on from here.
+    b.hovering = b.hold and chart.air[f] ~= nil and f > 4 and (b.hover_t or 0) < HOVER_MAX
+    if b.hovering then
+      b.hover_t = (b.hover_t or 0) + dt
+      b.flare = math.max(b.flare, FLARE_TIME * 0.7)    -- the jet burns blue to hold it up
+    else
+      b.chart = b.chart + dt
+    end
     local walking = f >= chart.land and (math.abs(b.tx - b.x) > 0.01 or math.abs(b.tz - b.z) > 0.01)   -- moving on
     if f > #chart.heights or walking then
       b.chart, b.air = nil, 0                         -- the crouch eases out as it walks (b.y heads for b.ty)
@@ -1311,6 +1321,13 @@ local function fingers(dt)
   local space = input.key("space")
   if space and not space_was then chart_jump(you) moved_on_your_own() end   -- the PC's key for the charted jump
   space_was = space
+  -- Holding in the air: a finger down on the right side (drawing counts), or Space held. Starting or stopping a
+  -- hover changes where you'll be, so a planned swing is planned again.
+  local hold = next(lines) ~= nil or space
+  if hold ~= (you.body.hold or false) then
+    you.body.hold = hold
+    if you.body.chart then moved_on_your_own() end
+  end
   local step = 1.4 * dt
   if input.key("a") or input.key("left") then you.body.tx = you.body.tx - step end
   if input.key("d") or input.key("right") then you.body.tx = you.body.tx + step end
