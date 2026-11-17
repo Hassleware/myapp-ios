@@ -50,5 +50,8 @@ void set_clipboard(const std::string& text);
 
 // A touch or click that no control claimed this frame, in 2D screen units. Used by the game list.
 bool tap(float& x, float& y);
+// The first finger, or the mouse while it is over the window (PC), in 2D screen units. down: pressed, not just
+// hovering; a finger on its last frame (lifted) reports down = false. False when there is no pointer at all.
+bool pointer(float& x, float& y, bool& down);
 
 }  // namespace input

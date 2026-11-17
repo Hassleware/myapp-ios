@@ -50,6 +50,8 @@ float pad_axis(SDL_GamepadAxis axis) {
 }
 bool tapped = false;
 float tapX = 0, tapY = 0;
+float mouseX = 0, mouseY = 0;   // where the mouse is over the window, for hovering (PC)
+bool mouseIn = false;
 
 float screen_w() { return gfx::view_width(); }
 float screen_h() { return gfx::view_height(); }
@@ -159,7 +161,11 @@ void handle_event(const SDL_Event& event) {
     case SDL_EVENT_MOUSE_MOTION:
         mouse_position(event, event.motion.x, event.motion.y, nx, ny);
         pointer_move(MOUSE_POINTER, nx, ny);
+        mouseX = nx * screen_w();
+        mouseY = ny * screen_h();
+        mouseIn = true;
         break;
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE: mouseIn = false; break;
     case SDL_EVENT_MOUSE_BUTTON_UP: pointer_up(MOUSE_POINTER); break;
     case SDL_EVENT_GAMEPAD_ADDED:
         if (!gamepad) gamepad = SDL_OpenGamepad(event.gdevice.which);
@@ -306,6 +312,19 @@ bool tap(float& x, float& y) {
 }
 
 const std::vector<Touch>& touches() { return touchList; }
+
+bool pointer(float& x, float& y, bool& down) {
+    for (const Touch& t : touchList) {
+        x = t.x;
+        y = t.y;
+        down = t.phase != 2;
+        return true;
+    }
+    x = mouseX;
+    y = mouseY;
+    down = false;
+    return mouseIn;
+}
 
 bool key(const std::string& name) {
     SDL_Scancode code = SDL_GetScancodeFromName(name.c_str());

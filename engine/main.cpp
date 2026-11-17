@@ -379,16 +379,42 @@ void draw_list() {
 
     float tapX = 0, tapY = 0;
     bool tapped = input::tap(tapX, tapY);
+    // Rows grow to HOVER_SCALE under the mouse or a finger and sink PRESS_SHIFT of their height while pressed,
+    // both eased; a game starts when the press is let go over the row it began on.
+    const float HOVER_SCALE = 1.1f, PRESS_SHIFT = 0.05f, EASE = 14;   // EASE: how fast they follow, per second
+    static std::vector<float> grow, sink;
+    static int pressedRow = -1;
+    static Uint64 lastDraw = 0;
+    Uint64 nowTicks = SDL_GetTicks();
+    float dt = lastDraw ? std::min((nowTicks - lastDraw) / 1000.0f, 0.1f) : 0;
+    lastDraw = nowTicks;
+    float follow = 1 - std::exp(-EASE * dt);
+    grow.resize(games.size(), 1);
+    sink.resize(games.size(), 0);
+    float px = 0, py = 0;
+    bool down = false, present = input::pointer(px, py, down);
     float y = top + 130;
-    for (const std::string& name : games) {
-        gfx::rect(left, y, right - left, 72, row);
-        gfx::rect(left, y, 6, 72, accent);
-        gfx::text(name, left + 34, y + 26, 24, textShadow);
-        gfx::text(name, left + 32, y + 24, 24, title);
-        if (tapped && tapY >= y && tapY < y + 72 && tapX >= left && tapX <= right) {
-            start_game(name);
-            return;
+    for (size_t i = 0; i < games.size(); i++) {
+        const std::string& name = games[i];
+        bool over = present && py >= y && py < y + 72 && px >= left && px <= right;
+        if (over && down && tapped) pressedRow = (int)i;
+        if (over && tapped && !down) pressedRow = (int)i;   // touched and let go within one frame
+        if (pressedRow == (int)i && !down) {
+            pressedRow = -1;
+            if (over) {
+                start_game(name);
+                return;
+            }
         }
+        grow[i] += ((over ? HOVER_SCALE : 1) - grow[i]) * follow;
+        sink[i] += ((over && down && pressedRow == (int)i ? PRESS_SHIFT * 72 : 0) - sink[i]) * follow;
+        // The whole button scaled about its centre, then moved down while pressed.
+        float s = grow[i], cx = (left + right) / 2, cy = y + 36 + sink[i];
+        float bw = (right - left) * s, bh = 72 * s, bx = cx - bw / 2, by = cy - bh / 2;
+        gfx::rect(bx, by, bw, bh, row);
+        gfx::rect(bx, by, 6 * s, bh, accent);
+        gfx::text(name, bx + 34 * s, by + 26 * s, 24 * s, textShadow);
+        gfx::text(name, bx + 32 * s, by + 24 * s, 24 * s, title);
         y += 84;
     }
     if (games.empty()) gfx::text("No games here yet.", left + 8, y + 10, 22, dim);
