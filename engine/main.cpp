@@ -218,8 +218,9 @@ void draw_problem(const std::string& title, const std::string& detail) {
 const float STAR_TILT = 15.0f * 3.14159265f / 180.0f;   // the star rows slope down to the right, and each star leans
 const int STAR_W = 448, STAR_H = 480;                    // one repeat: 4 columns of stars, 4 rows (row step = STAR_W * tan 15)
 const float STAR_SPEED = 8, STRIPE_SPEED = 10;           // 2D units a second
-const float STRIPE_TILE = 72, TOOTH_W = 30, TOOTH_H = 14, TOOTH_SHADOW = 5;
-gfx::Handle goldTex = 0, fadeTex = 0, starTex = 0, stripeTex = 0, toothTex = 0, toothBlurTex = 0, bandTex = 0;
+const float STRIPE_TILE = 72, TOOTH_W = 30, TOOTH_H = 14;
+const float TOOTH_SHADOW = 4, SHADOW_BLUR = 4, SHADOW_H = 32;   // the teeth's shadow: drop, softness, strip height
+gfx::Handle goldTex = 0, fadeTex = 0, starTex = 0, stripeTex = 0, shadowTex = 0, bandTex = 0;
 
 float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
@@ -254,8 +255,9 @@ void make_background() {
         for (int x = 0; x < GW; x++) {
             float u = (x + 0.5f) / GW, v = (y + 0.5f) / GH, c[3];
             gold_at(u, v, c);
-            // The fade sits over the stars, so they seem to come out of and go into the sides and top.
-            float edge = std::max({1 - clamp01(u / 0.2f), 1 - clamp01((1 - u) / 0.2f), 1 - clamp01(v / 0.15f)});
+            // The fade sits over the stars, so they seem to come out of and go into the sides, top and teeth.
+            float edge = std::max({1 - clamp01(u / 0.2f), 1 - clamp01((1 - u) / 0.2f), 1 - clamp01(v / 0.15f),
+                                   1 - clamp01((1 - v) / 0.1f)});
             uint8_t* g = &gold[(y * GW + x) * 4];
             uint8_t* f = &fade[(y * GW + x) * 4];
             for (int i = 0; i < 3; i++) g[i] = f[i] = (uint8_t)(c[i] * 255);
@@ -301,20 +303,22 @@ void make_background() {
         }
     stripeTex = gfx::engine_texture(S, S, stripes.data(), 0);
 
-    // One sawtooth tooth pointing down, sharp and blurred (its shadow), and a soft band for under the edge.
-    const int TW = 32, TH = 16;
-    std::vector<uint8_t> tooth(TW * TH * 4), blur(TW * TH * 4);
-    for (int y = 0; y < TH; y++)
-        for (int x = 0; x < TW; x++) {
-            float d = (std::fabs(x + 0.5f - TW / 2.0f) - (TW / 2.0f) * (1 - (y + 0.5f) / TH)) * 0.7071f;
-            uint8_t* t = &tooth[(y * TW + x) * 4];
-            uint8_t* b = &blur[(y * TW + x) * 4];
-            t[0] = t[1] = t[2] = b[0] = b[1] = b[2] = 255;
-            t[3] = (uint8_t)(clamp01(0.5f - d) * 255);
-            b[3] = (uint8_t)(clamp01(0.5f - d / 5) * 255);
+    // The teeth's shadow as one repeating strip: the sawtooth's outline moved down TOOTH_SHADOW and blurred.
+    // One repeat is one tooth wide (2 texels a unit, so it stays smooth) and SHADOW_H tall; it is clear at
+    // the bottom, so nothing builds up where neighbouring teeth meet.
+    const int SW = (int)(TOOTH_W * 2), SH = (int)(SHADOW_H * 2);
+    std::vector<uint8_t> shade(SW * SH * 4);
+    const float edgeSlope = TOOTH_H / (TOOTH_W / 2), along = 1 / std::sqrt(1 + edgeSlope * edgeSlope);
+    for (int y = 0; y < SH; y++)
+        for (int x = 0; x < SW; x++) {
+            float ux = (x + 0.5f) / 2, uy = (y + 0.5f) / 2;                         // in 2D units, y down from the edge
+            float lowest = TOOTH_SHADOW + TOOTH_H - std::fabs(ux - TOOTH_W / 2) * edgeSlope;   // the outline's y here
+            float d = (uy - lowest) * along;                                          // + below the outline
+            uint8_t* q = &shade[(y * SW + x) * 4];
+            q[0] = q[1] = q[2] = 255;
+            q[3] = (uint8_t)(clamp01(0.5f - d / SHADOW_BLUR) * clamp01((SHADOW_H - 1 - uy) / 3) * 255);
         }
-    toothTex = gfx::engine_texture(TW, TH, tooth.data(), gfx::TEX_CLAMP);
-    toothBlurTex = gfx::engine_texture(TW, TH, blur.data(), gfx::TEX_CLAMP);
+    shadowTex = gfx::engine_texture(SW, SH, shade.data(), gfx::TEX_NOMIP);
     uint8_t band[32 * 4];
     for (int y = 0; y < 32; y++) {
         band[y * 4] = band[y * 4 + 1] = band[y * 4 + 2] = 255;
@@ -323,28 +327,39 @@ void make_background() {
     bandTex = gfx::engine_texture(1, 32, band, gfx::TEX_CLAMP);
 }
 
-// goldBottom: where the gold ends and the sawtooth starts.
+// goldBottom: where the teeth start. The gold, its stars and its fade are each drawn once over the whole
+// shape (a rectangle down to goldBottom plus a triangle per tooth) with one texture mapping, so the colour
+// and the stars run straight on into the points with no seam.
 void draw_background(float goldBottom) {
     if (!goldTex) make_background();
-    float w = gfx::view_width(), h = gfx::view_height(), t = SDL_GetTicks() / 1000.0f;
-    const float white[4] = {1, 1, 1, 1}, shadow[4] = {0.35f, 0.25f, 0.1f, 0.35f}, starTint[4] = {1, 1, 1, 0.11f};
+    float w = gfx::view_width(), h = gfx::view_height(), t = SDL_GetTicks() / 1000.0f, all = goldBottom + TOOTH_H;
+    const float white[4] = {1, 1, 1, 1}, shadow[4] = {0, 0, 0, 0.16f}, band[4] = {0, 0, 0, 0.07f}, starTint[4] = {1, 1, 1, 0.11f};
     // ponytail: the pan wraps by fmod so the float never grows; a session of weeks would still be smooth
     float su = std::fmod(t * STRIPE_SPEED / STRIPE_TILE, 1.0f), tu = std::fmod(t * STAR_SPEED / STAR_W, 1.0f);
     const float stripeUv[4] = {-su, goldBottom / STRIPE_TILE, w / STRIPE_TILE - su, h / STRIPE_TILE};
     gfx::image(stripeTex, 0, goldBottom, w, h - goldBottom, white, stripeUv);
-    const float bandUv[4] = {0, 0, 1, 1}, all[4] = {0, 0, 1, 1};
-    gfx::image(bandTex, 0, goldBottom, w, 56, shadow, bandUv);
-    gfx::image(goldTex, 0, 0, w, goldBottom, white, all);
-    const float starUv[4] = {-tu, 0, w / STAR_W - tu, goldBottom / STAR_H};
-    gfx::image(starTex, 0, 0, w, goldBottom, starTint, starUv);
-    gfx::image(fadeTex, 0, 0, w, goldBottom, white, all);
-    for (float x = 0; x < w; x += TOOTH_W) {
-        float c[3];
-        gold_at((x + TOOTH_W / 2) / w, 1, c);
-        const float tint[4] = {c[0], c[1], c[2], 1};
-        gfx::image(toothBlurTex, x - 2, goldBottom - 1 + TOOTH_SHADOW, TOOTH_W + 4, TOOTH_H + 2, shadow, all);
-        gfx::image(toothTex, x, goldBottom - 0.5f, TOOTH_W, TOOTH_H, tint, all);
-    }
+    const float bandUv[4] = {0, 0, 1, 1};
+    gfx::image(bandTex, 0, goldBottom, w, 60, band, bandUv);
+    const float half = 0.5f / (SHADOW_H * 2);   // half a texel: keeps the strip's clear bottom from wrapping to its top
+    const float shadowUv[4] = {0, half, w / TOOTH_W, 1 - half};
+    gfx::image(shadowTex, 0, goldBottom, w, SHADOW_H, shadow, shadowUv);
+
+    // One layer over the gold shape, its texture spanning u0..u1 across the screen and v0..v1 from 0 to `all`.
+    auto layer = [&](gfx::Handle tex, const float tint[4], float u0, float v0, float u1, float v1) {
+        auto U = [&](float x) { return u0 + (u1 - u0) * x / w; };
+        auto V = [&](float y) { return v0 + (v1 - v0) * y / all; };
+        const float rectUv[4] = {u0, v0, u1, V(goldBottom)};
+        gfx::image(tex, 0, 0, w, goldBottom, tint, rectUv);
+        for (float x = 0; x < w; x += TOOTH_W) {
+            float mid = x + TOOTH_W / 2, end = x + TOOTH_W;
+            const float xy[6] = {x, goldBottom, mid, all, end, goldBottom};
+            const float uv[6] = {U(x), V(goldBottom), U(mid), V(all), U(end), V(goldBottom)};
+            gfx::triangle(tex, xy, uv, tint);
+        }
+    };
+    layer(goldTex, white, 0, 0, 1, 1);
+    layer(starTex, starTint, -tu, 0, w / STAR_W - tu, all / STAR_H);
+    layer(fadeTex, white, 0, 0, 1, 1);
 }
 
 void draw_list() {

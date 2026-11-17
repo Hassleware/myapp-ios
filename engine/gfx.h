@@ -113,6 +113,7 @@ float view_height();
 void rect(float x, float y, float w, float h, const float rgba[4]);
 void circle(float cx, float cy, float radius, const float rgba[4]);
 void image(Handle tex, float x, float y, float w, float h, const float rgba[4], const float uv[4]);
+void triangle(Handle tex, const float xy[6], const float uv[6], const float rgba[4]);   // three corners and their uvs
 void text(const std::string& s, float x, float y, float size, const float rgba[4]);
 float text_width(const std::string& s, float size);
 

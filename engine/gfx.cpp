@@ -2258,6 +2258,14 @@ void image(Handle tex, float x, float y, float w, float h, const float rgba[4], 
     quad_2d(tex, x, y, w, h, color, uv[0], uv[1], uv[2], uv[3]);
 }
 
+void triangle(Handle tex, const float xy[6], const float uv[6], const float rgba[4]) {
+    float color[4];
+    lin4(rgba, color);
+    Vertex* v = flat_verts(3, flat_material(tex));
+    if (!v) return;
+    for (int i = 0; i < 3; i++) set_vertex(v[i], xy[i * 2], xy[i * 2 + 1], 0, uv[i * 2], uv[i * 2 + 1], color);
+}
+
 void circle(float cx, float cy, float radius, const float rgba[4]) {
     if (uiLogging) uiBoxes.push_back({cx - radius, cy - radius, radius * 2, radius * 2, true, ""});
     const int segments = 28;
