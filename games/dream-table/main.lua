@@ -971,6 +971,16 @@ end
 
 -- ---------------------------------------------------------------- drawing
 
+-- Text with a black outline: the words drawn in black around it, then in colour on top.
+local OUTLINE = 2   -- outline thickness, in 2D units
+local function text(s, x, y, size, r, g, b, a)
+  for k = 0, 7 do
+    local angle = k / 8 * math.pi * 2
+    gfx.text(s, x + math.cos(angle) * OUTLINE, y + math.sin(angle) * OUTLINE, size, 0, 0, 0, a or 1)
+  end
+  gfx.text(s, x, y, size, r, g, b, a)
+end
+
 function draw()
   gfx.clear(scenery.FOG[1], scenery.FOG[2], scenery.FOG[3])
   camera()
@@ -1053,22 +1063,22 @@ function draw()
   -- Score and messages, in your dot font.
   gfx.font(font)
   local left, top, right, bottom = gfx.safe()
-  gfx.text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)
+  text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)
   local board = words(string.format("YOU %d  -  %d CPU", score.player, score.cpu))
-  gfx.text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
+  text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
   local serving = words((state == "serve" or state == "point") and (serve_turn() == "player" and "YOUR SERVE" or "CPU SERVES") or "")
-  gfx.text(serving, w - right - gfx.text_width(serving, 18) - 24, top + 60, 18, 0.7, 0.75, 0.9)
-  if wins > 0 then gfx.text(words("WINS " .. wins), left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
+  text(serving, w - right - gfx.text_width(serving, 18) - 24, top + 60, 18, 0.7, 0.75, 0.9)
+  if wins > 0 then text(words("WINS " .. wins), left + 80, top + 56, 18, 0.7, 0.75, 0.9) end
 
   local center = nil
   if state == "serve" and server == "player" then center = "DRAW A LINE TO TOSS" end
   if state == "toss" and server == "player" and not you.armed then center = "DRAW AGAIN TO HIT IT" end
   if state == "over" then center = message .. "   TAP TO PLAY AGAIN" end
-  if center then center = words(center) gfx.text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
+  if center then center = words(center) text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
-    gfx.text(words(message), (w - gfx.text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
+    text(words(message), (w - gfx.text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
   local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
-  gfx.text(walk_hint, w * 0.25 - gfx.text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
-  gfx.text(swing_hint, w * 0.75 - gfx.text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  text(walk_hint, w * 0.25 - gfx.text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  text(swing_hint, w * 0.75 - gfx.text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
 end
