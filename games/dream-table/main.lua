@@ -114,6 +114,22 @@ local FALL_MAX, FAST_FALL = 3.5, 6.5 -- how fast it may fall, and how fast after
 local AIR_JUMP, AIR_JUMPS = 3.8, 1   -- a jump in mid-air (any direction), and how many before landing
 local AIR_STEER, AIR_SPEED = 0.012, 3.0   -- dragging in the air nudges it (m/s per unit), up to this fast
 local SQUAT = 0.05                   -- a moment's crouch before it leaves the ground
+
+-- The charted jump (the user's paper, 17 November 2026): a straight-up jump that follows these heights exactly,
+-- one a frame at 60 fps, from the button press (frame 1) to standing again. 15 is standing. No physics: the hips
+-- sit at (height - 15) * CHART_UNIT metres. Above standing the feet leave the ground; at or below it they stay
+-- planted and the knees bend (the jump squat, frames 1-4, and the landing squash and recovery, from frame 56).
+-- Read from the paper: rows 1-30, 31-50, then 22 columns (labelled 51-59, 50-62), then 63-80 (the circled L
+-- column has no height and is left out). Fractions as written (34 1/2 is 34.5).
+local CHART = {
+  12, 12, 11, 11, 21, 26, 30, 33, 34.5, 36, 37.25, 38.5, 39.25, 40.75, 41.875, 42.875, 43.667, 44.5, 45.333, 46,
+  46.25, 46.5, 46.75, 47, 47.333, 47.125, 47, 46.75, 46.5, 46.25,
+  45.75, 45.25, 44.625, 44, 43.75, 42.5, 41.25, 40, 38.75, 37.5, 36, 34, 32.75, 31, 30, 28.5, 27, 26.5, 24, 23,
+  21.5, 20, 19, 17.5, 16.25, 15, 13.5, 10, 9.25, 9.5, 9.25, 9.5, 10, 10.25, 10.5, 10.75, 10.875, 10.875, 10.875,
+  10.75, 10.5, 10.25,
+  10, 9.875, 9.75, 9.75, 10, 10.25, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 13.75, 14, 14, 14.5, 15,
+}
+local CHART_STAND, CHART_UNIT, CHART_FPS = 15, 0.05, 60
 local FALL_ROLL = math.rad(82)       -- a big dive ends lying this far over
 local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
 local JUMP_REACH, DIVE_REACH = 2.2, 4.0   -- metres a second across the floor for a jump and for a dive
@@ -564,6 +580,7 @@ local function pose(m, dt)
   end
   local tuck = b.air > 0.05 and math.min(1, b.air / 0.4) * 0.7 * (1 - math.abs(b.lean) / DIVE_LEAN) or 0
   if b.squat > 0 then tuck = 0.35 end
+  if b.chart and b.air == 0 and b.y < 0 then tuck = math.min(0.6, -b.y / 0.3 * 0.6) end   -- charted crouch, squash
   bend_limbs(m, b.fallw, b.kneel, tuck, side)
   local ahead = rot(b.base, v(0, 0, 1))
   local half = b.roll / 2
@@ -585,6 +602,18 @@ local function walk(m, dt)
   b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
   if b.phase then b.tx, b.tz = b.x, b.z end           -- fallen or getting up: no walking
+  if b.chart then                                     -- the charted jump: the height is read, not simulated
+    local f = math.floor(b.chart * CHART_FPS + 0.5) + 1      -- this step's frame (fixed steps are 1/60 s)
+    b.chart = b.chart + dt
+    if f > #CHART then
+      b.chart, b.y, b.air = nil, 0, 0
+    else
+      local off = (CHART[f] - CHART_STAND) * CHART_UNIT
+      b.tx, b.tz, b.jx, b.jz, b.vx, b.vz = b.x, b.z, 0, 0, 0, 0   -- straight up and down
+      if off > 0 then b.air, b.y = off, 0 else b.air, b.y = 0, off end
+    end
+    return
+  end
   if b.squat > 0 then                                 -- the crouch before take-off
     b.squat = b.squat - dt
     b.y = -0.08
@@ -892,6 +921,13 @@ local function jump(right, up, power)
   b.down_for = extreme > DOWN_FROM and (extreme - DOWN_FROM) / (1 - DOWN_FROM) * DOWN_MOST or 0
 end
 
+-- The charted jump: straight up, following CHART frame by frame.
+local function chart_jump()
+  local b = you.body
+  if b.phase or b.chart or b.air > 0 or b.squat > 0 then return end
+  b.chart, b.lean, b.down_for = 0, 0, 0
+end
+
 local function swing_from(line)
   if state == "serve" and server == "player" then
     -- Your serve, first line: the toss. The ball pops up off your bat.
@@ -912,6 +948,7 @@ local function swing_from(line)
   end
 end
 
+local space_was = false
 local function fingers(dt)
   local w, h = gfx.size()
   for _, t in ipairs(input.touches()) do
@@ -946,7 +983,7 @@ local function fingers(dt)
         local vx, vy = (t.x - a[2]) / span, (a[3] - t.y) / span     -- right and up, units a second
         local speed = math.sqrt(vx * vx + vy * vy)
         if speed > FLICK_SPEED then
-          jump(vx / speed, vy / speed, lib.clamp(speed / 2000, 0.5, 1))
+          chart_jump()   -- was jump(vx / speed, vy / speed, power): the floaty physics jump, any direction
         end
       end
       drags[t.id] = nil
@@ -965,6 +1002,9 @@ local function fingers(dt)
       end
     end
   end
+  local space = input.key("space")
+  if space and not space_was then chart_jump() end   -- the PC's key for the charted jump
+  space_was = space
   local step = 1.4 * dt
   if input.key("a") or input.key("left") then you.body.tx = you.body.tx - step end
   if input.key("d") or input.key("right") then you.body.tx = you.body.tx + step end
@@ -1060,7 +1100,7 @@ function draw()
   for _, m in ipairs({ robot, you }) do
     gfx.draw(blob_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.9, 1, 0.7, 0.1, 0.14, 0.35, 0.45 / (1 + m.body.air * 2))
     for _, leg in ipairs(m.legs) do
-      if leg.plant then gfx.draw(blob_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.3, 1, 0.38, 0.1, 0.14, 0.35, 0.5) end
+      if leg.plant and m.body.air == 0 then gfx.draw(blob_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.3, 1, 0.38, 0.1, 0.14, 0.35, 0.5) end
     end
   end
   gfx.texture(1, nil)
