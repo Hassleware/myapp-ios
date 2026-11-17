@@ -675,14 +675,30 @@ local function serve_charge()
   return ball.vy > 0 and 1 - ball.vy / SERVE_TOSS or 1
 end
 
--- The serve meter: a column of soft dots on the right edge that slides in for your serve and out once it's hit.
--- The dots fill with the charge, cool blue to gold to red-hot, and pulse when full; once the ball is falling a star
--- with a sparkle trail drops down the column with it, reaching the bottom at the last moment to swing (SERVE_LAST).
-local METER_DOTS, METER_GAP, METER_DOT = 14, 26, 18
-local meter = { show = 0, star = 0 }
-local function meter_colour(t)                     -- 0 at the bottom dot, 1 at the top
-  if t < 0.5 then return 0.3 + 1.4 * t, 0.75 + 0.2 * t, 1 - 1.4 * t end
-  return 1, 0.85 - 1.1 * (t - 0.5), 0.3 - 0.4 * (t - 0.5)
+-- How far the star has fallen, 0 to 1: from the top of the toss to SERVE_LAST, the last moment to swing.
+local function serve_star()
+  if state ~= "toss" or server ~= "player" or ball.vy > 0 or not you.toss_y then return 0 end
+  local apex = you.toss_y + SERVE_TOSS * SERVE_TOSS / (2 * TOSS_G)
+  return math.min(1, math.max(0, (apex - ball.y) / (apex - you.toss_y - SERVE_LAST)))
+end
+
+-- The serve meter: a long capsule on the right edge that slides in for your serve and out once it's hit. It fills
+-- from the bottom with the charge, a smooth gradient from cool blue through gold to hot pink, shimmering when full;
+-- once the ball is falling a star with a sparkle trail drops down inside it, reaching the bottom at the last moment
+-- to swing (SERVE_LAST). Drawn as thin horizontal slices, each as wide as the capsule is at that height.
+local METER_H, METER_W, METER_SLICES = 340, 30, 48
+local meter = { show = 0 }
+local GRADIENT = { { 0.25, 0.65, 1 }, { 0.3, 0.95, 0.85 }, { 1, 0.85, 0.25 }, { 1, 0.45, 0.2 }, { 1, 0.35, 0.7 } }
+local function gradient(t)                          -- 0 at the bottom, 1 at the top
+  local f = t * (#GRADIENT - 1)
+  local i = math.min(#GRADIENT - 1, math.floor(f) + 1)
+  local a, b, u = GRADIENT[i], GRADIENT[i + 1], f - (i - 1)
+  return a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, a[3] + (b[3] - a[3]) * u
+end
+local function capsule_width(y, h, w)               -- y from the top; rounded at both ends
+  local r = w / 2
+  local d = y < r and r - y or (y > h - r and y - (h - r) or 0)
+  return d >= r and 0 or 2 * math.sqrt(r * r - d * d)
 end
 local function draw_meter(tex, w, h, right, now, dt)
   local wanted = server == "player" and (state == "serve" or state == "toss") and not (state == "toss" and you.armed and ball.vy < -3)
@@ -690,46 +706,74 @@ local function draw_meter(tex, w, h, right, now, dt)
   if meter.show < 0.01 then return end
   local slide = 1 - meter.show
   slide = slide * slide * (3 - 2 * slide)
-  local col_h = (METER_DOTS - 1) * METER_GAP
-  local x = w - right - 52 + slide * 140               -- slides in from beyond the right edge
-  local y0 = h * 0.5 - col_h / 2                       -- the top dot
+  local x = w - right - 46 + slide * 140               -- the capsule's middle; slides in from beyond the right edge
+  local y0 = h * 0.5 - METER_H / 2                     -- its top
   local charge = serve_charge()
   local full = charge >= 0.999
-  gfx.rect(x - 22, y0 - 34, 44, col_h + 68, 0.04, 0.06, 0.18, 0.45 * meter.show)
-  local lit = charge * METER_DOTS
-  for i = 0, METER_DOTS - 1 do
-    local from_bottom = METER_DOTS - 1 - i
-    local cy = y0 + i * METER_GAP
-    local on = math.min(1, math.max(0, lit - from_bottom))
-    local r, g, b = meter_colour(from_bottom / (METER_DOTS - 1))
-    local size = METER_DOT * (on > 0 and (1 + 0.25 * on) or 0.8)
-    gfx.image(tex, x - size / 2, cy - size / 2, size, size, 1, 1, 1, 0.16 * meter.show)        -- the empty dot
-    if on > 0 then
-      if full then                                     -- full: a white-hot pulse running up the column, and a glow
-        local pulse = 0.5 + 0.5 * math.sin(now * 14 - from_bottom * 0.6)
-        r, g, b = r + (1 - r) * pulse * 0.7, g + (1 - g) * pulse * 0.7, b + (0.9 - b) * pulse * 0.7
-        local glow = size * (1.8 + 0.4 * pulse)
-        gfx.image(tex, x - glow / 2, cy - glow / 2, glow, glow, r, g, b, 0.35 * meter.show)
+  local a = meter.show
+  local step = METER_H / METER_SLICES
+  for i = 0, METER_SLICES - 1 do
+    local y = i * step
+    local mid = y + step / 2
+    local rim = capsule_width(mid, METER_H, METER_W + 8)    -- a dark rim
+    if rim > 0 then gfx.rect(x - rim / 2, y0 - 4 + y * (METER_H + 8) / METER_H, rim, step * (METER_H + 8) / METER_H + 0.5, 0.05, 0.06, 0.16, 0.7 * a) end
+  end
+  for i = 0, METER_SLICES - 1 do
+    local y = i * step
+    local cw = capsule_width(y + step / 2, METER_H, METER_W)
+    if cw > 0 then
+      local t = 1 - (y + step / 2) / METER_H           -- 0 at the bottom
+      local r, g, b = gradient(t)
+      if t <= charge then
+        if full then                                   -- full: a bright shimmer running up the capsule
+          local pulse = 0.5 + 0.5 * math.sin(now * 10 - t * 9)
+          r, g, b = r + (1 - r) * pulse * 0.45, g + (1 - g) * pulse * 0.45, b + (1 - b) * pulse * 0.45
+        end
+        gfx.rect(x - cw / 2, y0 + y, cw, step + 0.5, r, g, b, a)
+      else
+        gfx.rect(x - cw / 2, y0 + y, cw, step + 0.5, r * 0.3, g * 0.3, b * 0.35, 0.55 * a)   -- not yet filled
       end
-      gfx.image(tex, x - size / 2, cy - size / 2, size, size, r, g, b, on * meter.show)
     end
   end
-  -- The star: from the top once the ball turns over, down to the bottom as it falls back to the bat.
+  gfx.rect(x - METER_W * 0.28, y0 + METER_W * 0.4, METER_W * 0.14, METER_H - METER_W * 0.8, 1, 1, 1, 0.22 * a)   -- a shine
+  if full then
+    local glow = METER_W * 3.2
+    gfx.image(tex, x - glow / 2, y0 - glow * 0.25, glow, glow * 0.6, 1, 0.5, 0.8, (0.25 + 0.15 * math.sin(now * 10)) * a)
+  end
+  -- The star: from the top once the ball turns over, down to the bottom at the last moment to swing.
   if state == "toss" and ball.vy <= 0 and you.toss_y then
-    local apex = you.toss_y + SERVE_TOSS * SERVE_TOSS / (2 * TOSS_G)
-    meter.star = math.min(1, math.max(0, (apex - ball.y) / (apex - you.toss_y - SERVE_LAST)))
-    local sy = y0 + meter.star * col_h
+    local sy = y0 + METER_W / 2 + serve_star() * (METER_H - METER_W)
     for k = 1, 4 do                                    -- the sparkle trail above it
       local ty = sy - k * 14
-      if ty > y0 - 10 then
-        local s = 10 - k * 2
-        gfx.image(tex, x - s / 2 + math.sin(now * 20 + k) * 3, ty - s / 2, s, s, 1, 0.95, 0.6, (0.7 - k * 0.15) * meter.show)
+      if ty > y0 then
+        local sz = 10 - k * 2
+        gfx.image(tex, x - sz / 2 + math.sin(now * 20 + k) * 3, ty - sz / 2, sz, sz, 1, 1, 0.8, (0.8 - k * 0.15) * a)
       end
     end
     local spin = 1 + 0.15 * math.sin(now * 18)
-    gfx.image(tex, x - 30 * spin, sy - 30 * spin, 60 * spin, 60 * spin, 1, 0.9, 0.4, 0.55 * meter.show)   -- its glow
-    bitfont.draw("*", x - 24 * spin, sy - 34 * spin, 72 * spin, 1, 0.96, 0.5, meter.show)
+    gfx.image(tex, x - 30 * spin, sy - 30 * spin, 60 * spin, 60 * spin, 1, 0.95, 0.6, 0.6 * a)   -- its glow
+    bitfont.draw("*", x - 24 * spin, sy - 34 * spin, 72 * spin, 1, 0.97, 0.6, a)
   end
+end
+
+-- The serve's rating, popping up in your font when the serve is hit (or missed): Perfect (pink) for a full charge
+-- swung late, while the star is in the lower SERVE_PERFECT of the capsule; Good (gold) from 60% charge; Okay
+-- (green) otherwise; Fail (dark grey) for a missed serve.
+local SERVE_PERFECT = 0.4
+local RATINGS = { perfect = { "Perfect!", 1, 0.45, 0.8 }, good = { "Good", 1, 0.8, 0.2 },
+                  okay = { "Okay", 0.35, 0.85, 0.35 }, fail = { "Fail", 0.3, 0.3, 0.33 } }
+local rating = nil                                   -- { kind, t }
+local function rate_serve(kind) rating = { kind = kind, at = sys.time() } end
+local function draw_rating(w, h)
+  if not rating then return end
+  rating.t = sys.time() - rating.at                    -- game time: it pauses with the game
+  if rating.t > 1.4 then rating = nil return end
+  local r = RATINGS[rating.kind]
+  local pop = rating.t < 0.15 and rating.t / 0.15 * 1.25 or (rating.t < 0.3 and 1.25 - (rating.t - 0.15) / 0.15 * 0.25 or 1)
+  local fade = rating.t > 1.1 and 1 - (rating.t - 1.1) / 0.3 or 1
+  local size = 56 * pop
+  local word = r[1]
+  bitfont.draw(word, (w - bitfont.width(word, size)) / 2, h * 0.3 - size / 2, size, r[2], r[3], r[4], fade)
 end
 
 -- The jet: a flame out of the bottom of the torso, flickering. For FLARE_TIME after a dash or a jump starts it is
@@ -898,6 +942,7 @@ local function player_hit(serving)
   local tx = lib.clamp(line.right * 0.65, -(HALF_W - 0.1), HALF_W - 0.1)
   local tz = -(0.45 + 0.8 * power)
   local served = serving and serve_shot(ball.x, ball.y, ball.z, tx, 0.5 + 0.6 * power)
+  if serving then rate_serve(you.serve_rating or "okay") end
   if served then hit("player", served[1], served[2], served[3], true)
   else hit("player", shot(ball.x, ball.y, ball.z, tx, tz, 0.85 - 0.35 * power)) end
   you.armed, you.body.ty, you.body.goal = false, 0, nil
@@ -1035,6 +1080,7 @@ local function step_ball(dt)
       if server == "player" then                                     -- a missed serve is the other side's point
         state, last = "rally", "player"
         award("cpu", "missed serve")
+        rate_serve("fail")
       else
         start_serve()
       end
@@ -1068,6 +1114,8 @@ local function swing_from(line)
   elseif state == "toss" and server == "player" and not you.armed and not plans[you] then
     -- Second line: the swing, planned onto the falling ball like any return; the charge now sets its power.
     you.aim, you.serve_power = line, math.max(0.25, serve_charge())
+    you.serve_rating = (serve_charge() >= 0.999 and serve_star() >= 1 - SERVE_PERFECT) and "perfect"
+                       or (serve_charge() >= 0.6 and "good" or "okay")
     start_plan(you, function() return plan_line(you, line, true) end)
   elseif state == "rally" then
     you.aim = line
@@ -1312,15 +1360,27 @@ function draw()
 
   -- Your lines: the one being drawn, and finished ones fading out.
   local w, h = gfx.size()
-  local function dots(l, alpha)
+  -- Your swipe: a glowing trail, thick and bright at the finger, tapering and fading behind it. Soft round spots
+  -- close enough together to read as one stroke (2D drawing has no turned quads).
+  local function trail(l, alpha)
+    local total = 0
+    for i = 2, #l do total = total + math.sqrt((l[i][1] - l[i - 1][1]) ^ 2 + (l[i][2] - l[i - 1][2]) ^ 2) end
+    local along = 0
     for i = 2, #l do
       local a, b = l[i - 1], l[i]
-      local n = math.max(1, math.floor(math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2) / 9))
-      for k = 0, n - 1 do gfx.rect(a[1] + (b[1] - a[1]) * k / n - 5, a[2] + (b[2] - a[2]) * k / n - 5, 10, 10, 1, 0.75, 0.9, alpha) end
+      local seg = math.sqrt((b[1] - a[1]) ^ 2 + (b[2] - a[2]) ^ 2)
+      local n = math.max(1, math.floor(seg / 4))
+      for k = 0, n - 1 do
+        local u = (along + seg * k / n) / math.max(total, 1)     -- 0 at the start, 1 at the finger
+        local size = 6 + 20 * u * u
+        local px, py = a[1] + (b[1] - a[1]) * k / n, a[2] + (b[2] - a[2]) * k / n
+        gfx.image(blob_tex, px - size / 2, py - size / 2, size, size, 1, 0.55 + 0.4 * u, 0.85 + 0.15 * u, alpha * (0.25 + 0.75 * u))
+      end
+      along = along + seg
     end
   end
-  for _, l in pairs(lines) do dots(l, 0.9) end
-  for _, d in ipairs(drawn) do dots(d.points, 0.9 * (1 - d.t / 0.5)) end
+  for _, l in pairs(lines) do trail(l, 0.95) end
+  for _, d in ipairs(drawn) do trail(d.points, 0.95 * (1 - d.t / 0.5)) end
   gfx.rect(w / 2 - 1, h * 0.55, 2, h * 0.3, 1, 1, 1, 0.08)   -- where walking ends and swinging begins
 
   -- Score and messages, in your dot font.
@@ -1340,8 +1400,10 @@ function draw()
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
     text(words(message), (w - text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
-  draw_meter(blob_tex, w, h, right, sys.real_time(), math.min(0.1, sys.real_time() - (meter.at or sys.real_time())))
+  local frame_dt = math.min(0.1, sys.real_time() - (meter.at or sys.real_time()))
   meter.at = sys.real_time()
+  draw_meter(blob_tex, w, h, right, sys.real_time(), frame_dt)
+  draw_rating(w, h)
   local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
   text(walk_hint, w * 0.25 - text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
   text(swing_hint, w * 0.75 - text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
