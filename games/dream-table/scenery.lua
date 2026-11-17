@@ -1,91 +1,201 @@
--- Dream Table's world: the table stands on a cobbled floor on a big floating cloud, under a deep blue sky with
--- giant beanstalks rising out of the clouds below, puffy clouds on their tops and drifting about.
--- Everything is made here in code at the first draw: two textures (sky, cobbles) and a few meshes.
+-- Dream Table's world, seen from above: a big flat cloud floor with a ring of puffy clouds round its edge, and in
+-- the middle an uneven patch of messy cobbles (stones thinning out into the cloud at its edge) where the table
+-- stands. Beyond: a deep blue sky, giant beanstalks rising out of the clouds below, clouds on their tops.
+-- Everything is made here in code at the first draw, with a fixed random seed so it is the same every time.
 
 local lib = include("lib.lua")
 local S = {}
 
-local FLOOR_W, FLOOR_Z0, FLOOR_Z1 = 5, -8, 10    -- the cobbled floor: width, far and near end (metres)
-local COBBLE_TILE = 1.6                           -- metres per copy of the cobble texture
-S.FOG = { 0.62, 0.80, 1.0 }                      -- the haze far away, matched to the sky at the horizon
+S.FOG = { 0.55, 0.76, 1.0 }                      -- the haze far away, matched to the sky at the horizon
+local PATCH_X, PATCH_Z = 4.6, 7.2                -- the cobble patch's half size (metres); its outline is wobbly
+local PATCH_TEX = 0.025                          -- metres per texel of the cobble texture
+local STONE = 0.2                                -- roughly how big a cobble is (metres)
+local CLOUD_FLOOR_X, CLOUD_FLOOR_Z0, CLOUD_FLOOR_Z1 = 13, -18, 14   -- the flat cloud: half width, far and near end
+local CLOUD_TOP, CLOUD_UNDER = { 1, 1, 1 }, { 0.62, 0.72, 0.92 }    -- clouds are lit from above: white top, blue under
 
--- A repeatable random sequence, so the world is the same on every reload.
 local seed = 1
 local function rnd(a, b)
   seed = (seed * 1103515245 + 12345) % 2147483648
   return a + (b - a) * seed / 2147483648
 end
 
-local function pack(w, h, pixel)
+local function byte(v) return string.char(math.floor(math.max(0, math.min(1, v)) * 255 + 0.5)) end
+
+-- Builds a texture from pixel(x, y) -> r, g, b [, a].
+local function texture(w, h, pixel, options)
   local rows = {}
   for y = 0, h - 1 do
     local row = {}
     for x = 0, w - 1 do
-      local r, g, b = pixel(x, y)
-      row[#row + 1] = string.char(math.floor(math.min(1, r) * 255), math.floor(math.min(1, g) * 255), math.floor(math.min(1, b) * 255), 255)
+      local r, g, b, a = pixel(x, y)
+      row[#row + 1] = byte(r) .. byte(g) .. byte(b) .. byte(a or 1)
     end
     rows[#rows + 1] = table.concat(row)
   end
-  return table.concat(rows)
+  return gfx.new_texture(w, h, table.concat(rows), options)
 end
 
--- The sky, wrapped round the camera: top to bottom it runs zenith to straight down.
--- Deep blue overhead, bright blue at the horizon, pale haze below (the cloud sea under the island).
+-- A normal map from a height function over a w x h grid (heights in texels), wrapping if asked.
+local function normal_map(w, h, height, strength, wrap)
+  local function at(x, y)
+    if wrap then x, y = x % w, y % h else x, y = math.max(0, math.min(w - 1, x)), math.max(0, math.min(h - 1, y)) end
+    return height[y * w + x + 1]
+  end
+  return texture(w, h, function(x, y)
+    local nx, ny = (at(x - 1, y) - at(x + 1, y)) * strength, (at(x, y - 1) - at(x, y + 1)) * strength
+    local l = math.sqrt(nx * nx + ny * ny + 1)
+    return nx / l * 0.5 + 0.5, ny / l * 0.5 + 0.5, 1 / l * 0.5 + 0.5
+  end, "data" .. (wrap and "" or " clamp"))
+end
+
+-- ---------------------------------------------------------------- sky
+
+-- Wrapped round the camera, top to bottom from straight up to straight down: dark blue high up, light blue at
+-- the horizon, pale below (the cloud sea under the floating cloud).
 local function sky_texture()
-  local W, H = 64, 256
-  return gfx.new_texture(W, H, pack(W, H, function(_, y)
-    local up = 1 - (y + 0.5) / H * 2                  -- 1 at the top, 0 at the horizon, -1 below
-    if up > 0 then
-      local t = up ^ 0.55
-      return 0.36 + (0.03 - 0.36) * t, 0.66 + (0.10 - 0.66) * t, 1.0 + (0.62 - 1.0) * t
+  local W, H = 8, 256
+  local DARK, LIGHT, BELOW = { 0.02, 0.07, 0.42 }, { 0.48, 0.76, 1.0 }, { 0.80, 0.90, 1.0 }
+  return texture(W, H, function(_, y)
+    local up = 1 - (y + 0.5) / H * 2
+    if up >= 0 then
+      local t = math.min(1, up / 0.45) ^ 0.75
+      return LIGHT[1] + (DARK[1] - LIGHT[1]) * t, LIGHT[2] + (DARK[2] - LIGHT[2]) * t, LIGHT[3] + (DARK[3] - LIGHT[3]) * t
     end
-    local t = math.min(1, -up * 6)
-    return 0.36 + (0.82 - 0.36) * t, 0.66 + (0.92 - 0.66) * t, 1.0
-  end), "clamp")
+    local t = math.min(1, -up * 5)
+    return LIGHT[1] + (BELOW[1] - LIGHT[1]) * t, LIGHT[2] + (BELOW[2] - LIGHT[2]) * t, LIGHT[3] + (BELOW[3] - LIGHT[3]) * t
+  end, "clamp")
 end
 
--- Cobbles: a jittered grid of stones (each pixel takes its nearest stone), mortar where two are nearly as
--- close, each stone its own grey-green, domed a little. Wraps seamlessly.
-local function cobble_texture()
-  local N, CELLS = 256, 7
+-- ---------------------------------------------------------------- the cobble patch
+
+-- How far a point is toward the patch's wobbly edge: 0 at the middle, 1 on the edge.
+local function patch_reach(x, z)
+  local a = math.atan(z / PATCH_Z, x / PATCH_X)
+  local wobble = 1 + 0.10 * math.sin(3 * a + 1.3) + 0.07 * math.sin(5 * a + 0.4) + 0.04 * math.sin(9 * a + 2.0)
+  return math.sqrt((x / PATCH_X) ^ 2 + (z / PATCH_Z) ^ 2) / wobble
+end
+
+-- One big picture of the whole patch (not repeating), so every stone is either all there or not at all.
+-- Stones sit on a jittered grid; each pixel belongs to its nearest stone. Each stone has its own size, shade
+-- and tint; between them is dark grit. Toward the edge stones go missing and the grit fades, so the patch
+-- frays into the cloud. Heights (domed stones, low grit) make the normal map.
+local function cobble_textures()
+  local W, H = math.floor(PATCH_X * 2 / PATCH_TEX), math.floor(PATCH_Z * 2 / PATCH_TEX)
+  local cell = STONE / PATCH_TEX                 -- texels per grid cell
+  local CW, CH = math.ceil(W / cell) + 1, math.ceil(H / cell) + 1
   local stones = {}
-  for cy = 0, CELLS - 1 do
-    for cx = 0, CELLS - 1 do
-      stones[cy * CELLS + cx] = { (cx + rnd(0.15, 0.85)) / CELLS, (cy + rnd(0.15, 0.85)) / CELLS, rnd(0.82, 1.08), rnd(-0.03, 0.03) }
+  for cy = 0, CH - 1 do
+    for cx = 0, CW - 1 do
+      local sx, sy = (cx + rnd(0.1, 0.9)) * cell, (cy + rnd(0.1, 0.9)) * cell
+      local reach = patch_reach(sx * PATCH_TEX - PATCH_X, sy * PATCH_TEX - PATCH_Z)
+      local keep = reach < 0.7 or rnd(0, 1) < (1.05 - reach) / 0.35   -- thinning out toward the edge
+      if rnd(0, 1) < 0.03 then keep = false end                         -- the odd stone missing anywhere
+      local shade = rnd(0.68, 1.0)
+      stones[cy * CW + cx + 1] = { sx, sy, keep = keep, gap = rnd(0.06, 0.2), shade = shade,
+                                   r = shade * rnd(0.95, 1.05), g = shade * rnd(0.97, 1.04), b = shade * rnd(0.9, 1.0) }
     end
   end
-  return gfx.new_texture(N, N, pack(N, N, function(x, y)
-    local u, v = (x + 0.5) / N, (y + 0.5) / N
-    local gx, gy = math.floor(u * CELLS), math.floor(v * CELLS)
-    local d1, d2, best = 9, 9, nil
-    for oy = -1, 1 do
-      for ox = -1, 1 do
-        local cx, cy = gx + ox, gy + oy
-        local s = stones[(cy % CELLS) * CELLS + (cx % CELLS)]
-        local dx, dy = u - (s[1] + (cx - cx % CELLS) / CELLS), v - (s[2] + (cy - cy % CELLS) / CELLS)
-        local d = math.sqrt(dx * dx + dy * dy)
-        if d < d1 then d2, d1, best = d1, d, s elseif d < d2 then d2 = d end
+  local heights, colors = {}, {}
+  for y = 0, H - 1 do
+    local gy = math.floor(y / cell)
+    for x = 0, W - 1 do
+      local gx = math.floor(x / cell)
+      local d1, d2, s1 = 1e9, 1e9, nil
+      for oy = -1, 1 do
+        local row = gy + oy
+        if row >= 0 and row < CH then
+          for ox = -1, 1 do
+            local col = gx + ox
+            if col >= 0 and col < CW then
+              local s = stones[row * CW + col + 1]
+              local dx, dy = x - s[1], y - s[2]
+              local d = dx * dx + dy * dy
+              if d < d1 then d2, d1, s1 = d1, d, s elseif d < d2 then d2 = d end
+            end
+          end
+        end
+      end
+      d1, d2 = math.sqrt(d1), math.sqrt(d2)
+      local edge = (d2 - d1) / cell              -- 0 on the line between two stones, about 0.5 in a stone's middle
+      local i = y * W + x + 1
+      local reach = patch_reach(x * PATCH_TEX - PATCH_X, y * PATCH_TEX - PATCH_Z)
+      local speck = rnd(0.94, 1.06)
+      if s1.keep and edge > s1.gap then
+        local dome = math.min(1, (edge - s1.gap) / 0.18)
+        heights[i] = 1 + math.sqrt(dome) * 2.5
+        local k = (0.72 + 0.28 * dome) * speck   -- darker round its rim
+        colors[i] = { 0.74 * s1.r * k, 0.73 * s1.g * k, 0.70 * s1.b * k, 1 }
+      else
+        heights[i] = 0
+        local grit = reach < 0.82 and 1 or 0                    -- grit between stones, gone near the edge
+        colors[i] = { 0.36 * speck, 0.34 * speck, 0.31 * speck, grit }
       end
     end
-    local edge = (d2 - d1) * CELLS                   -- 0 on the line between two stones
-    local k = best[3] * (0.86 + 0.14 * math.min(1, edge * 3)) * (1 - d1 * CELLS * 0.18)
-    if edge < 0.07 then k = 0.55 end                 -- mortar
-    return 0.72 * k, (0.76 + best[4]) * k, 0.70 * k
-  end))
-end
-
--- A quad lying flat, its texture repeating every `tile` metres.
-local function floor_mesh(x0, z0, x1, z1, tile)
-  local n = {}
-  for _, c in ipairs({ { x0, z0 }, { x1, z0 }, { x1, z1 }, { x0, z1 } }) do
-    for _, v in ipairs({ c[1], 0, c[2], 0, 1, 0, c[1] / tile, c[2] / tile }) do n[#n + 1] = v end
   end
-  return gfx.new_mesh(n, { 1, 3, 2, 1, 4, 3 }, "pnu")
+  local color = texture(W, H, function(x, y) local c = colors[y * W + x + 1] return c[1], c[2], c[3], c[4] end, "clamp")
+  return color, normal_map(W, H, heights, 1.6, false)
 end
 
--- A beanstalk: a tube winding up round a slow spiral, thick at the root and thin at the top.
+-- ---------------------------------------------------------------- meshes
+
+-- Flat-shaded triangles: each corner {x, y, z, u, v}, the normal worked out per triangle, and an optional
+-- colour per triangle from color(nx, ny, nz).
+local function flat_mesh(tris, color)
+  local n, idx = {}, {}
+  for _, t in ipairs(tris) do
+    local a, b, c = t[1], t[2], t[3]
+    local ux, uy, uz = b[1] - a[1], b[2] - a[2], b[3] - a[3]
+    local vx, vy, vz = c[1] - a[1], c[2] - a[2], c[3] - a[3]
+    local nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+    local l = math.sqrt(nx * nx + ny * ny + nz * nz) + 1e-9
+    nx, ny, nz = nx / l, ny / l, nz / l
+    for _, p in ipairs({ a, b, c }) do
+      for _, v in ipairs({ p[1], p[2], p[3], nx, ny, nz, p[4] or 0, p[5] or 0 }) do n[#n + 1] = v end
+      if color then local r, g, bl = color(nx, ny, nz) for _, v in ipairs({ r, g, bl, 1 }) do n[#n + 1] = v end end
+      idx[#idx + 1] = #idx + 1
+    end
+  end
+  return gfx.new_mesh(n, idx, color and "pnuc" or "pnu")
+end
+
+-- A low-poly cloud puff: a lumpy ball of few faces, each coloured by which way it faces (white on top, blue
+-- underneath), so clouds look lit from above whatever the sun does. Drawn unlit.
+local function puff_mesh()
+  local RINGS, SEGS = 5, 8
+  local p = {}
+  for r = 0, RINGS do
+    p[r] = {}
+    for s = 0, SEGS - 1 do
+      local phi, th = math.pi * r / RINGS, math.pi * 2 * (s + (r % 2) * 0.5) / SEGS
+      local k = (r == 0 or r == RINGS) and 0.5 or 0.5 * rnd(0.88, 1.08)
+      p[r][s] = { math.sin(phi) * math.cos(th) * k, math.cos(phi) * k, math.sin(phi) * math.sin(th) * k }
+    end
+  end
+  local tris = {}
+  for r = 0, RINGS - 1 do
+    for s = 0, SEGS - 1 do
+      local a, b, c, d = p[r][s], p[r][(s + 1) % SEGS], p[r + 1][s], p[r + 1][(s + 1) % SEGS]
+      if r > 0 then tris[#tris + 1] = { a, b, c } end
+      if r < RINGS - 1 then tris[#tris + 1] = { b, d, c } end
+    end
+  end
+  return flat_mesh(tris, function(_, ny)
+    local t = ((ny + 1) / 2) ^ 1.4
+    return CLOUD_UNDER[1] + (CLOUD_TOP[1] - CLOUD_UNDER[1]) * t, CLOUD_UNDER[2] + (CLOUD_TOP[2] - CLOUD_UNDER[2]) * t,
+           CLOUD_UNDER[3] + (CLOUD_TOP[3] - CLOUD_UNDER[3]) * t
+  end)
+end
+
+-- A flat quad lying at height y, with texture coordinates 0 to 1 across it.
+local function quad_mesh(x0, z0, x1, z1)
+  return gfx.new_mesh({ x0, 0, z0, 0, 1, 0, 0, 0,  x1, 0, z0, 0, 1, 0, 1, 0,  x1, 0, z1, 0, 1, 0, 1, 1,  x0, 0, z1, 0, 1, 0, 0, 1 },
+                      { 1, 3, 2, 1, 4, 3 }, "pnu")
+end
+
+-- A beanstalk: a tube winding up a slow spiral, thick at the root and thin at the top. The texture runs round
+-- it (u) and along it (v, repeating).
 local function stalk_mesh(height, wind, turns, r0, r1)
-  local n, idx, SIDES, STEPS = {}, {}, 10, 48
+  local n, idx, SIDES, STEPS = {}, {}, 10, 40
   local function spine(t)
     local a = t * turns * math.pi * 2
     return math.sin(a) * wind * (1 - t * 0.5), t * height, math.cos(a) * wind * (1 - t * 0.5)
@@ -98,16 +208,15 @@ local function stalk_mesh(height, wind, turns, r0, r1)
     local tx, ty, tz = x2 - x0, y2 - y0, z2 - z0
     local tl = math.sqrt(tx * tx + ty * ty + tz * tz)
     tx, ty, tz = tx / tl, ty / tl, tz / tl
-    -- two directions across the tube
-    local ax, ay, az = tz, 0, -tx
+    local ax, az = tz, -tx
     local al = math.sqrt(ax * ax + az * az) + 1e-6
     ax, az = ax / al, az / al
-    local bx, by, bz = ty * az - tz * ay, tz * ax - tx * az, tx * ay - ty * ax
+    local bx, by, bz = ty * az, tz * ax - tx * az, -ty * ax
     local r = r0 + (r1 - r0) * t
     for s = 0, SIDES do
       local a = s / SIDES * math.pi * 2
-      local nx, ny, nz = ax * math.cos(a) + bx * math.sin(a), ay * math.cos(a) + by * math.sin(a), az * math.cos(a) + bz * math.sin(a)
-      for _, v in ipairs({ x + nx * r, y + ny * r, z + nz * r, nx, ny, nz, s / SIDES, t * 8 }) do n[#n + 1] = v end
+      local nx, ny, nz = ax * math.cos(a) + bx * math.sin(a), by * math.sin(a), az * math.cos(a) + bz * math.sin(a)
+      for _, v in ipairs({ x + nx * r, y + ny * r, z + nz * r, nx, ny, nz, s / SIDES, t * height / 6 }) do n[#n + 1] = v end
     end
   end
   for i = 0, STEPS - 1 do
@@ -120,74 +229,140 @@ local function stalk_mesh(height, wind, turns, r0, r1)
   return gfx.new_mesh(n, idx, "pnu"), spine
 end
 
--- A cloud: a handful of balls, the biggest in the middle and flattened underneath.
-local function new_cloud(x, y, z, size)
-  local balls = {}
-  local count = math.floor(rnd(5, 8))
-  for i = 1, count do
-    local a = (i - 1) / count * math.pi * 2 + rnd(-0.3, 0.3)
-    local spread = size * rnd(0.35, 0.6)
-    balls[i] = { x + math.cos(a) * spread, y + rnd(0, 0.3) * size, z + math.sin(a) * spread * 0.6, size * rnd(0.55, 0.85) }
+-- A leaf, one unit long from its stalk end (at the origin) to its tip along +x: a pointed oval folded a little
+-- along its middle vein and drooping toward the tip. Texture: u along it, v across.
+local function leaf_mesh()
+  local STEPS, tris, rows = 8, {}, {}
+  for i = 0, STEPS do
+    local t = i / STEPS
+    local w = 0.45 * math.sin(math.pi * t) ^ 0.8 + 0.02
+    local droop = -0.22 * t * t
+    rows[i] = { { t, droop, -w, t, 0 }, { t, droop + 0.05 * (1 - t), 0, t, 0.5 }, { t, droop, w, t, 1 } }
   end
-  balls[#balls + 1] = { x, y + size * 0.3, z, size * 1.1 }
-  return balls
+  for i = 0, STEPS - 1 do
+    for j = 1, 2 do
+      local a, b, c, d = rows[i][j], rows[i][j + 1], rows[i + 1][j], rows[i + 1][j + 1]
+      tris[#tris + 1] = { a, b, c }
+      tris[#tris + 1] = { b, d, c }
+    end
+  end
+  return flat_mesh(tris)
 end
 
+-- Beanstalk skin: ridges running along it, lighter on their backs, with streaks; and its normal map.
+local function stalk_textures()
+  local W, H, RIDGES = 64, 128, 7
+  local heights, streak = {}, {}
+  for x = 0, W - 1 do streak[x] = rnd(0.9, 1.1) end
+  for y = 0, H - 1 do
+    for x = 0, W - 1 do heights[y * W + x + 1] = (0.5 + 0.5 * math.cos(x / W * math.pi * 2 * RIDGES)) * 3 end
+  end
+  local color = texture(W, H, function(x, y)
+    local ridge = heights[y * W + x + 1] / 3
+    local k = (0.75 + 0.3 * ridge) * streak[x] * (0.97 + 0.03 * math.sin(y / H * math.pi * 6 + x))
+    return 0.20 * k, 0.56 * k, 0.33 * k
+  end)
+  return color, normal_map(W, H, heights, 0.6, true)
+end
+
+-- Leaf skin: green, a pale middle vein, side veins slanting toward the tip, darker at the rim.
+local function leaf_textures()
+  local W, H = 128, 64
+  local heights = {}
+  local function vein(x, y)
+    local u, v = x / W, y / H
+    local across = math.abs(v - 0.5) * 2
+    local mid = math.max(0, 1 - math.abs(v - 0.5) * H / 2.5)
+    local side = math.max(0, 1 - math.abs(((u - across * 0.25) * 9) % 1 - 0.5) * 2 * 6) * (1 - across) * (u < 0.95 and 1 or 0)
+    return math.max(mid, side * 0.6), across
+  end
+  for y = 0, H - 1 do
+    for x = 0, W - 1 do heights[y * W + x + 1] = vein(x, y) * 2 end
+  end
+  local color = texture(W, H, function(x, y)
+    local v, across = vein(x, y)
+    local k = 1 - across * across * 0.3
+    return (0.22 + 0.35 * v) * k, (0.66 + 0.2 * v) * k, (0.26 + 0.25 * v) * k
+  end, "clamp")
+  return color, normal_map(W, H, heights, 0.8, false)
+end
+
+-- ---------------------------------------------------------------- building the world
+
 local made = false
-local sky, cobbles, floor, stalks, clouds, island = nil, nil, nil, {}, {}, {}
+local sky, patch, patch_tex, patch_normal, cloud_floor, puff = nil, nil, nil, nil, nil, nil
+local stalk_tex, stalk_normal, leaf, leaf_tex, leaf_normal = nil, nil, nil, nil, nil
+local stalks, puffs, drifting = {}, {}, {}
+
+local function add_cloud(list, x, y, z, size)
+  local count = math.floor(rnd(4, 7))
+  for i = 1, count do
+    local a = (i - 1) / count * math.pi * 2 + rnd(-0.4, 0.4)
+    local spread = size * rnd(0.4, 0.65)
+    local s = size * rnd(0.6, 0.9)
+    list[#list + 1] = { x + math.cos(a) * spread, y + rnd(0, 0.25) * size, z + math.sin(a) * spread * 0.7, s, rnd(0, 360) }
+  end
+  list[#list + 1] = { x, y + size * 0.3, z, size * 1.15, rnd(0, 360) }
+end
 
 local function make()
   made = true
-  sky, cobbles = sky_texture(), cobble_texture()
-  floor = floor_mesh(-FLOOR_W / 2, FLOOR_Z0, FLOOR_W / 2, FLOOR_Z1, COBBLE_TILE)
+  sky = sky_texture()
+  patch_tex, patch_normal = cobble_textures()
+  patch = quad_mesh(-PATCH_X, -PATCH_Z, PATCH_X, PATCH_Z)
+  cloud_floor = quad_mesh(-CLOUD_FLOOR_X, CLOUD_FLOOR_Z0, CLOUD_FLOOR_X, CLOUD_FLOOR_Z1)
+  puff = puff_mesh()
+  stalk_tex, stalk_normal = stalk_textures()
+  leaf = leaf_mesh()
+  leaf_tex, leaf_normal = leaf_textures()
 
-  -- The island: big cloud balls along the floor's edges and under it, so the floor sits in the cloud.
-  local function lump(x, z, size) island[#island + 1] = { x, -0.275 * size + rnd(0.1, 0.45), z, size } end   -- tops just above the floor
-  for z = FLOOR_Z0, FLOOR_Z1, 1.3 do
-    for _, side in ipairs({ -1, 1 }) do
-      lump(side * (FLOOR_W / 2 + rnd(0.2, 0.9)), z + rnd(-0.4, 0.4), rnd(2.0, 3.2))
-      lump(side * (FLOOR_W / 2 + rnd(2.0, 3.5)), z + rnd(-0.4, 0.4), rnd(2.8, 4.0))
-    end
+  -- Real clouds all round the flat cloud's edge.
+  local function edge_cloud(x, z) add_cloud(puffs, x, rnd(-0.5, 0.3), z, rnd(2.2, 3.6)) end
+  for z = CLOUD_FLOOR_Z0, CLOUD_FLOOR_Z1, 3.2 do
+    edge_cloud(-CLOUD_FLOOR_X + rnd(-0.5, 0.5), z + rnd(-0.6, 0.6))
+    edge_cloud(CLOUD_FLOOR_X + rnd(-0.5, 0.5), z + rnd(-0.6, 0.6))
   end
-  for x = -FLOOR_W / 2 - 2, FLOOR_W / 2 + 2, 1.4 do
-    lump(x + rnd(-0.3, 0.3), FLOOR_Z0 - rnd(0.3, 1.2), rnd(2.2, 3.4))
-  end
-  for z = FLOOR_Z0, FLOOR_Z1, 3 do
-    for x = -FLOOR_W / 2, FLOOR_W / 2, 3 do island[#island + 1] = { x, -2.2, z, 4.5 } end
+  for x = -CLOUD_FLOOR_X, CLOUD_FLOOR_X, 3.2 do
+    edge_cloud(x + rnd(-0.6, 0.6), CLOUD_FLOOR_Z0 + rnd(-0.5, 0.5))
   end
 
-  -- Beanstalks far off, rising out of the cloud sea below, each with a cloud on top and a few leaves.
+  -- Beanstalks far off, rising out of the cloud sea below, each with leaves and a cloud on top.
   local spots = { { -26, -48 }, { 20, -40 }, { -9, -70 }, { 40, -66 }, { -44, -30 }, { 7, -95 } }
   for i, p in ipairs(spots) do
     local height = rnd(40, 58)
-    local mesh, spine = stalk_mesh(height, rnd(1.2, 2.2), rnd(1.0, 1.8), rnd(1.6, 2.2), rnd(0.5, 0.8))
+    local r0, r1 = rnd(1.6, 2.2), rnd(0.5, 0.8)
+    local mesh, spine = stalk_mesh(height, rnd(1.2, 2.2), rnd(1.0, 1.8), r0, r1)
     local base = -30
-    local tx, ty, tz = spine(1)
     local leaves = {}
-    for k = 1, 4 do
-      local t = rnd(0.35, 0.9)
+    for k = 1, 6 do
+      local t = rnd(0.35, 0.92)
       local lx, ly, lz = spine(t)
-      local a, size = rnd(0, math.pi * 2), rnd(3, 5)
-      local out = size * 0.8 + 1                     -- the leaf sticks out sideways from the stalk
-      leaves[k] = { p[1] + lx + math.cos(a) * out, base + ly, p[2] + lz + math.sin(a) * out, -math.deg(a), size }
+      local a = rnd(0, math.pi * 2)
+      local r = r0 + (r1 - r0) * t
+      local ax, ay, az, aw = lib.quat_axis(0, 1, 0, -math.deg(a))
+      local qx, qy, qz, qw = lib.quat_mul(ax, ay, az, aw, lib.quat_axis(0, 0, 1, rnd(5, 30)))
+      leaves[k] = { p[1] + lx + math.cos(a) * r * 0.8, base + ly, p[2] + lz + math.sin(a) * r * 0.8, qx, qy, qz, qw, rnd(5, 8) }
     end
-    stalks[i] = { mesh = mesh, x = p[1], y = base, z = p[2], leaves = leaves,
-                  cloud = new_cloud(p[1] + tx, base + ty + 1.5, p[2] + tz, rnd(4, 6)) }
+    local tx, ty, tz = spine(1)
+    local top = {}
+    add_cloud(top, p[1] + tx, base + ty + 1.5, p[2] + tz, rnd(4, 6))
+    stalks[i] = { mesh = mesh, x = p[1], y = base, z = p[2], leaves = leaves, top = top }
   end
 
-  -- Loose clouds drifting in the distance.
-  for _ = 1, 14 do
+  -- Loose clouds in the distance, swaying slowly.
+  for _ = 1, 12 do
     local a = rnd(-math.pi * 0.85, -math.pi * 0.15)
     local d = rnd(45, 110)
-    clouds[#clouds + 1] = { cloud = new_cloud(math.cos(a) * d, rnd(-6, 22), math.sin(a) * d, rnd(3, 7)), speed = rnd(0.3, 0.8) }
+    local c = { speed = rnd(0.3, 0.8) }
+    add_cloud(c, math.cos(a) * d, rnd(-6, 22), math.sin(a) * d, rnd(3, 7))
+    drifting[#drifting + 1] = c
   end
 end
 
-local STALK, LEAF, CLOUD = { 0.24, 0.62, 0.42 }, { 0.20, 0.72, 0.30 }, { 1, 1, 1 }
-
-local function draw_balls(balls, dx)
-  for _, b in ipairs(balls) do
-    gfx.draw(gfx.SPHERE, b[1] + dx, b[2], b[3], 0, 0, 0, 1, b[4], b[4] * 0.8, b[4], CLOUD[1], CLOUD[2], CLOUD[3], 1)
+local function draw_puffs(list, dx)
+  for _, b in ipairs(list) do
+    local qx, qy, qz, qw = lib.quat_axis(0, 1, 0, b[5])
+    gfx.draw(puff, b[1] + dx, b[2], b[3], qx, qy, qz, qw, b[4], b[4] * 0.75, b[4], 1, 1, 1, 1)
   end
 end
 
@@ -201,29 +376,33 @@ function S.lights()
 end
 
 function S.draw(time)
-  gfx.cull(false)
-  gfx.texture(1, cobbles)
-  gfx.draw(floor, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1)
-  gfx.texture(1, nil)
-  gfx.cull(true)
+  -- The flat cloud, then the cobbles laid on it (see-through where there are no stones).
+  gfx.draw(cloud_floor, 0, -0.005, 0, 0, 0, 0, 1, 1, 1, 1, 0.84, 0.89, 0.98, 1)
+  gfx.texture(1, patch_tex)
+  gfx.texture(2, patch_normal)
+  gfx.cutoff(0.5)
+  gfx.draw(patch, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1)
+  gfx.cutoff(0)
 
   gfx.cast_shadows(false)
-  for _, b in ipairs(island) do
-    gfx.draw(gfx.SPHERE, b[1], b[2], b[3], 0, 0, 0, 1, b[4], b[4] * 0.55, b[4], 0.97, 0.98, 1, 1)
-  end
   gfx.cull(false)
+  gfx.texture(1, stalk_tex)
+  gfx.texture(2, stalk_normal)
+  for _, s in ipairs(stalks) do gfx.draw(s.mesh, s.x, s.y, s.z, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1) end
+  gfx.texture(1, leaf_tex)
+  gfx.texture(2, leaf_normal)
   for _, s in ipairs(stalks) do
-    gfx.draw(s.mesh, s.x, s.y, s.z, 0, 0, 0, 1, 1, 1, 1, STALK[1], STALK[2], STALK[3], 1)
-    for _, l in ipairs(s.leaves) do
-      local qx, qy, qz, qw = lib.quat_euler(l[4], 0, 25)
-      gfx.draw(gfx.SPHERE, l[1], l[2], l[3], qx, qy, qz, qw, l[5] * 1.6, 0.25, l[5], LEAF[1], LEAF[2], LEAF[3], 1)
-    end
+    for _, l in ipairs(s.leaves) do gfx.draw(leaf, l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[8], l[8], 1, 1, 1, 1) end
   end
+  gfx.texture(1, nil)
+  gfx.texture(2, nil)
   gfx.cull(true)
-  for _, s in ipairs(stalks) do draw_balls(s.cloud, 0) end
-  for _, c in ipairs(clouds) do
-    draw_balls(c.cloud, math.sin(time * c.speed * 0.05) * 12)   -- a slow sway from side to side
-  end
+
+  gfx.unlit(true)
+  draw_puffs(puffs, 0)
+  for _, s in ipairs(stalks) do draw_puffs(s.top, 0) end
+  for _, c in ipairs(drifting) do draw_puffs(c, math.sin(time * c.speed * 0.05) * 12) end
+  gfx.unlit(false)
   gfx.cast_shadows(true)
 end
 
