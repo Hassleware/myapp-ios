@@ -384,7 +384,8 @@ void draw_list() {
     // so the inverted copy shows round it as a rim. Both eased; a game starts when the press is let go over the
     // row it began on.
     const float HOVER_SCALE = 1.1f, PRESS_INSET = 6, EASE = 14;   // EASE: how fast they follow, per second
-    static std::vector<float> grow, sink;   // sink: how far the face is pulled in, 0 to PRESS_INSET
+    const float PRESS_DARKEN = 0.2f, DARKEN_TIME = 0.05f;   // the pressed face fades this much darker over this many seconds
+    static std::vector<float> grow, sink, shade;   // sink: how far the face is pulled in; shade: 0 to 1 of PRESS_DARKEN
     static int pressedRow = -1;
     static Uint64 lastDraw = 0;
     Uint64 nowTicks = SDL_GetTicks();
@@ -393,8 +394,10 @@ void draw_list() {
     float follow = 1 - std::exp(-EASE * dt);
     grow.resize(games.size(), 1);
     sink.resize(games.size(), 0);
+    shade.resize(games.size(), 0);
     float px = 0, py = 0;
-    bool down = false, present = input::pointer(px, py, down);    float y = top + 130;
+    bool down = false, present = input::pointer(px, py, down);
+    float y = top + 130;
     for (size_t i = 0; i < games.size(); i++) {
         const std::string& name = games[i];
         bool over = present && py >= y && py < y + 72 && px >= left && px <= right;
@@ -408,15 +411,19 @@ void draw_list() {
             }
         }
         grow[i] += ((over ? HOVER_SCALE : 1) - grow[i]) * follow;
-        sink[i] += ((over && down && pressedRow == (int)i ? PRESS_INSET : 0) - sink[i]) * follow;
+        bool pressing = over && down && pressedRow == (int)i;
+        sink[i] += ((pressing ? PRESS_INSET : 0) - sink[i]) * follow;
+        shade[i] = std::clamp(shade[i] + (pressing ? 1 : -1) * dt / DARKEN_TIME, 0.0f, 1.0f);
         // The whole button scaled about its centre: the inverted copy, then the face pulled in by `in` per edge.
         float s = grow[i], cx = (left + right) / 2, cy = y + 36, in = sink[i];
         float bw = (right - left) * s, bh = 72 * s, bx = cx - bw / 2, by = cy - bh / 2;
         const float rowInv[4] = {1 - row[0], 1 - row[1], 1 - row[2], 1}, accentInv[4] = {1 - accent[0], 1 - accent[1], 1 - accent[2], 1};
         gfx::rect(bx, by, bw, bh, rowInv);
         gfx::rect(bx, by, 6 * s, bh, accentInv);
-        gfx::rect(bx + in, by + in, bw - 2 * in, bh - 2 * in, row);
-        gfx::rect(bx + in, by + in, 6 * s, bh - 2 * in, accent);
+        float k = 1 - PRESS_DARKEN * shade[i];
+        const float face[4] = {row[0] * k, row[1] * k, row[2] * k, 1}, faceAccent[4] = {accent[0] * k, accent[1] * k, accent[2] * k, 1};
+        gfx::rect(bx + in, by + in, bw - 2 * in, bh - 2 * in, face);
+        gfx::rect(bx + in, by + in, 6 * s, bh - 2 * in, faceAccent);
         gfx::text(name, bx + 34 * s, by + 26 * s, 24 * s, textShadow);
         gfx::text(name, bx + 32 * s, by + 24 * s, 24 * s, title);
         y += 84;
