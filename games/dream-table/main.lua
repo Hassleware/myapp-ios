@@ -3,11 +3,10 @@
 -- movement, wherever you start (a trackpad, not a joystick). Draw a line on the right half to swing: the line's
 -- direction picks the stroke from the recorded shots (the way the bat travelled when it was recorded), and its
 -- direction and length aim the ball and set its pace. Draw it any time before the ball arrives; the mannequin
--- times the swing and steps to meet the ball. On the left half, let go while the finger is still moving fast and
--- it's a jump that way, any angle at all: straight up hops high toward the table, the more sideways the flick the
--- lower, longer and more tipped over (a dive), down hops back. Harder flicks go further; a soft flick is a short hop.
--- In the air it's light and floaty: drag to steer, flick again for one more jump (any direction), flick down to drop
--- fast. Big dives end on the floor: it falls over, bracing on its arms, stays down, then rolls up to a kneel and stands.
+-- times the swing and steps to meet the ball. On the left half, let go while the finger is still moving fast: flick
+-- up and it jumps straight up, following the charted heights (CHART); flick any other way and it dashes that way.
+-- Both mannequins have no legs: they are jet torsos, a flame under the hips that flares big and blue as a dash or a
+-- jump starts, and sputters while the torso flutters on the way down from a jump.
 -- Your serve, as in real table tennis: the first line tosses the ball up off your bat; the second is the swing, and
 -- you time it: the bat meets the ball where it will be SWING_LEAD seconds after you finish drawing. The serve must
 -- bounce on your side, then on the other. Miss it and it's the robot's point.
@@ -104,21 +103,12 @@ local CONTACT = 2.0                  -- seconds into every shot clip that the ba
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
 local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it
-local STEP_LENGTH, STEP_TIME, STEP_HEIGHT = 0.16, 0.16, 0.07  -- a foot this far behind steps, taking this long, this high
 local TOP_SPEED = 2.2                -- metres a second: the body can't outrun its feet
-local CARIOCA_SPEED = 0.6            -- moving sideways faster than this, the trailing foot crosses over (carioca)
-local CROSS_PAST, CROSS_DEPTH = 0.08, 0.09   -- how far past the leading foot it lands, and in front of or behind it
-local JUMP_SPEED = 4.4               -- a full jump leaves the ground this fast: about 1.6 m high, a light character
-local AIR_GRAVITY = 6.0              -- floaty: weaker than real gravity in the air
-local FALL_MAX, FAST_FALL = 3.5, 6.5 -- how fast it may fall, and how fast after a downward flick in the air
-local AIR_JUMP, AIR_JUMPS = 3.8, 1   -- a jump in mid-air (any direction), and how many before landing
-local AIR_STEER, AIR_SPEED = 0.012, 3.0   -- dragging in the air nudges it (m/s per unit), up to this fast
-local SQUAT = 0.05                   -- a moment's crouch before it leaves the ground
 
 -- The charted jump (the user's paper, 17 November 2026): a straight-up jump that follows these heights exactly,
 -- one a frame at 60 fps, from the button press (frame 1) to standing again. 15 is standing. No physics: the hips
--- sit at (height - 15) * CHART_UNIT metres. Above standing the feet leave the ground; at or below it they stay
--- planted and the knees bend (the jump squat, frames 1-4, and the landing squash and recovery, from frame 56).
+-- sit at (height - 15) * CHART_UNIT metres: below standing (the jump squat, frames 1-4, and the landing squash and
+-- recovery, from frame 56) the torso dips, above it it flies.
 -- Read from the paper: rows 1-30, 31-50, then 22 columns (labelled 51-59, 50-62), then 63-80 (the circled L
 -- column has no height and is left out). Fractions as written (34 1/2 is 34.5).
 local CHART = {
@@ -136,13 +126,15 @@ local CHART_LAND
 for i = 2, #CHART do
   if not CHART_LAND and CHART[i - 1] > CHART_STAND and CHART[i] <= CHART_STAND then CHART_LAND = i end
 end
-local FALL_ROLL = math.rad(82)       -- a big dive ends lying this far over
-local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
-local JUMP_REACH, DIVE_REACH = 2.2, 4.0   -- metres a second across the floor for a jump and for a dive
-local DIVE_LEAN = math.rad(55)       -- how far the most sideways, hardest dive tips the body over
-local DOWN_FROM, DOWN_MOST = 0.35, 1.4   -- dives more extreme than this (0 to 1) fall over and stay down, up to this long
+local CHART_PEAK = 1                 -- the highest frame: the flutter is from here to CHART_LAND
+for i = 2, #CHART do if CHART[i] > CHART[CHART_PEAK] then CHART_PEAK = i end end
+local FLUTTER_HZ, FLUTTER_ROLL = 7, math.rad(12)   -- the fall's flutter: wobbles a second, and how far it rolls
+local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump or dash, slower a walk
+local DASH_DIST, DASH_TIME = 1.6, 0.22    -- a dash covers this far (metres) this quickly (seconds)
+local FLARE_TIME = 0.4               -- the flame's big blue flare when a dash or jump starts fades over this long
+local LEAN_PER_SPEED, LEAN_MOST = math.rad(4), math.rad(30)   -- tilt toward where it's going: per m/s, and at most
+local LEAN_EASE = 10                 -- how quickly the tilt follows (bigger is quicker); it eases back upright
 local SWING_LEAD = 0.32              -- your serve swing meets the ball this long after you finish the line
-local LIFTED = 0.07                  -- an ankle the animation raises this far above the other is its own step: leave it
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
 local CROUCH = 0.3                   -- how far a body may sink (knees bending) to play a high shot on a lower ball
 local TOSS = 2.6                     -- how fast the flick sends the ball up to be served (metres a second)
@@ -289,13 +281,10 @@ local function new_mannequin(side)
               blend = { from = nil, t = 1 }, used = {}, serve_hand = "R", armed = false, aim = nil,
               face = side == "cpu" and { 0, 0, 0, 1 } or yaw_turn(math.pi) }
   local z = m.sign * (HALF_L + 0.6)
-  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, jv = 0, jx = 0, jz = 0, roll = 0, lean = 0, down = 0, down_for = 0, squat = 0, launch = 0, fast = false, air_jumps = AIR_JUMPS,
-             phase = nil, phase_t = 0, pivot = v(0, 0, 0), fallw = 0, kneel = 0, sink = 0, fall_roll = 0, rise_for = 0, base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
+  m.body = { x = 0, y = 0, ty = 0, drop = 0, air = 0, roll = 0, pivot = v(0, 0, 0), flare = 0, dash = nil, chart = nil,
+             base = m.face, z = z, tx = 0, tz = z, vx = 0, vz = 0, turn = m.face, move = moves[1], plan_for = nil,
              blade = v(0, 1, z) }
-  for _, s in ipairs({ "L", "R" }) do
-    local ankle = joint("foot." .. s, 0)
-    m.legs[#m.legs + 1] = { thigh = "thigh." .. s, shin = "shin." .. s, foot = "foot." .. s, rest = ankle[2] }
-  end
+  m.legs = { "thigh.L", "thigh.R" }                  -- hidden every frame (pose): these are jet torsos
   if moves[1] then m.anim:play(moves[1].clip, { loop = false, speed = 0, time = 0.3, fade = 0 }) end   -- ready
   return m
 end
@@ -305,7 +294,7 @@ local robot, you
 -- body.drop lowers the whole body so its lowest foot is on the floor (the recordings hold the hips a little high).
 -- Where the model's origin is: the body's place, its height (drop onto its feet, jumps, sinking), and pivot: tipping
 -- over (a dive, a fall) turns it about the hips rather than the feet.
-local function height(m) return m.body.y - m.body.drop + m.body.air - m.body.sink end
+local function height(m) return m.body.y - m.body.drop + m.body.air end
 local function origin(m) return add(v(m.body.x, height(m), m.body.z), m.body.pivot) end
 local function to_world(m, p) return add(origin(m), rot(m.body.turn, p)) end
 local function to_model(m, p) return rot(qinv(m.body.turn), sub(p, origin(m))) end
@@ -355,7 +344,7 @@ end
 -- Plans are coroutines, spread over a few fixed steps (PLAN_SLICE moves tried per step) so no frame goes over the
 -- Lua budget (budget.lua). start_plan replaces any plan in progress; run_plans moves them on each fixed step and
 -- calls done(result) when one finishes.
-local PLAN_SLICE = 8
+local PLAN_SLICE = 6
 local plans = {}
 local function start_plan(m, fn, done) plans[m] = { co = coroutine.create(fn), done = done } end
 local function run_plans(dt)
@@ -419,135 +408,10 @@ local function plan_line(m, line, serving)
   end)
 end
 
--- Two-bone IK: thigh and shin turn so the ankle reaches target (inside the model); the foot keeps its turn.
-local function reach(m, leg, target)
-  local a = m.anim.animator
-  local hip, thigh_turn = joint(leg.thigh, a)
-  local knee, shin_turn = joint(leg.shin, a)
-  local ankle, foot_turn = joint(leg.foot, a)
-  local _, hips_turn = joint("hips", a)
-  local la, lb = len(sub(knee, hip)), len(sub(ankle, knee))
-  local to = sub(target, hip)
-  local d = math.min(math.max(len(to), math.abs(la - lb) + 1e-3), la + lb - 1e-3)
-  local dir = unit(to)
-  -- Which way the knee bends: the animation's knee, plus a steady pull toward the way the body faces, so a nearly
-  -- straight leg (whose own bend direction is tiny) can't flip its knee from one frame to the next.
-  local function across(p) return sub(p, mul(dir, dot(p, dir))) end
-  local forward = rot(qmul(hips_turn, qinv(rest.hips)), v(0, 0, 1))
-  local bend = unit(add(across(sub(knee, hip)), mul(unit(across(forward)), 0.08)))
-  local c = math.max(-1, math.min(1, (la * la + d * d - lb * lb) / (2 * la * d)))
-  local new_knee = add(add(hip, mul(dir, la * c)), mul(bend, la * math.sqrt(1 - c * c)))
-  local new_ankle = add(hip, mul(dir, d))
-  local turn_thigh = from_to(sub(knee, hip), sub(new_knee, hip))
-  local new_thigh = qmul(turn_thigh, thigh_turn)
-  local new_shin = qmul(from_to(rot(turn_thigh, sub(ankle, knee)), sub(new_ankle, new_knee)), qmul(turn_thigh, shin_turn))
-  set_turn(leg.thigh, hips_turn, new_thigh, a)
-  set_turn(leg.shin, new_thigh, new_shin, a)
-  set_turn(leg.foot, new_shin, foot_turn, a)
-end
-
--- Planted feet stay flat on the floor while the body moves; one at a time, a foot left too far behind steps.
--- The recordings hold one ankle a few centimetres up nearly all the time (left over from fitting the take to the
--- mannequin), so a foot counts as the animation's own step only when it is LIFTED above the other one.
-local function feet(m, dt)
-  -- How high the animation holds each ankle above standing on the floor; the body drops so the lowest one is.
-  local low = math.huge
-  for _, leg in ipairs(m.legs) do low = math.min(low, joint(leg.foot, m.anim.animator)[2] - leg.rest) end
-  m.body.drop = lib.approach(m.body.drop, low, 20, dt)
-  local wants = {}
-  for i, leg in ipairs(m.legs) do
-    local wanted = to_world(m, (joint(leg.foot, m.anim.animator)))
-    wanted[2] = wanted[2] - height(m) - leg.rest
-    wants[i] = wanted
-  end
-  low = math.min(wants[1][2], wants[2][2])
-  for i, leg in ipairs(m.legs) do
-    local wanted = wants[i]
-    local lift = wanted[2] - low
-    wanted[2] = leg.rest + (lift > LIFTED and lift or 0)          -- on the floor unless the animation steps
-    local other = m.legs[3 - i]
-    leg.plant = leg.plant or wanted
-    local target
-    if m.body.air > 0.005 or m.body.phase then                    -- jumping or fallen: the feet go with the body
-      target = to_world(m, (joint(leg.foot, m.anim.animator)))
-      leg.plant, leg.step = v(target[1], leg.rest, target[3]), nil
-    elseif lift > LIFTED then                                     -- the animation's own step: follow it
-      leg.plant, leg.step, target = wanted, nil, wanted
-    else
-      -- Steps alternate (the next may start when the other foot is halfway), a foot left twice a stride behind
-      -- steps anyway, and each step lands where the body is heading, so planted feet are never dragged.
-      local behind = math.sqrt((wanted[1] - leg.plant[1]) ^ 2 + (wanted[3] - leg.plant[3]) ^ 2)
-      local free = not other.step or other.step.t > 0.5
-      if not leg.step and behind > STEP_LENGTH and (free or behind > STEP_LENGTH * 2) then
-        local lead = STEP_TIME * 1.2
-        local to = v(wanted[1] + m.body.vx * lead, wanted[2], wanted[3] + m.body.vz * lead)
-        -- Carioca: moving sideways quickly, the trailing foot crosses over the leading one, in front of it and
-        -- behind it by turns; the leading foot then steps out as usual.
-        local right, ahead = rot(m.body.turn, v(-1, 0, 0)), rot(m.body.turn, v(0, 0, 1))
-        local sideways = m.body.vx * right[1] + m.body.vz * right[3]
-        if math.abs(sideways) > CARIOCA_SPEED and leg.foot:sub(-1) ~= (sideways > 0 and "R" or "L") then
-          m.cross = not m.cross
-          local s = sideways > 0 and 1 or -1
-          to = add(other.plant, add(mul(right, s * CROSS_PAST), mul(ahead, m.cross and CROSS_DEPTH or -CROSS_DEPTH)))
-          to[2] = wanted[2]
-        end
-        leg.step = { from = leg.plant, to = to, t = 0 }
-      end
-      if leg.step then
-        leg.step.t = math.min(1, leg.step.t + dt / STEP_TIME)
-        local s = leg.step.t * leg.step.t * (3 - 2 * leg.step.t)
-        target = add(leg.step.from, mul(sub(leg.step.to, leg.step.from), s))
-        target[2] = wanted[2] + math.sin(math.pi * leg.step.t) * STEP_HEIGHT
-        if leg.step.t >= 1 then leg.plant, leg.step = leg.step.to, nil end
-      else
-        target = v(leg.plant[1], wanted[2], leg.plant[3])
-      end
-    end
-    -- A foot never jumps when it changes between planted, stepping and following the animation: the jump is kept
-    -- as an offset that fades out. Otherwise the foot is exactly on its target, so a landed step doesn't slide.
-    local mode = (m.body.air > 0.005 or m.body.phase) and "air" or leg.step and "step" or (lift > LIFTED and "anim" or "planted")
-    if leg.at and mode ~= leg.mode then leg.offset = sub(leg.at, target) end
-    leg.mode = mode
-    leg.offset = leg.offset and mul(leg.offset, math.exp(-25 * dt)) or v(0, 0, 0)
-    leg.at = add(target, leg.offset)
-    reach(m, leg, to_model(m, leg.at))
-  end
-end
-
 -- Where the top of a bat's blade is in the world, for the ball to rest on.
 local function on_bat(m, side)
   local b = to_world(m, blade_in_model(side, m.anim.animator))
   return v(b[1], b[2] + R + 0.012, b[3])
-end
-
--- Procedural limbs on top of whatever the animation does, each by a weight from 0 to 1:
---   fall: knees drawn up, arms thrown out to brace toward the side it falls to (side = -1 or 1), head held up;
---   kneel: hips and knees bent deep, for getting up; tuck: knees pulled up in the air, as a light jumper does.
--- Bones are turned about the body's own side and forward axes (inside the model), whole limbs at once.
-local function axis_turn(axis, angle)
-  local h = angle / 2
-  return { axis[1] * math.sin(h), axis[2] * math.sin(h), axis[3] * math.sin(h), math.cos(h) }
-end
-local function bend_limbs(m, fall, kneel, tuck, side)
-  if fall + kneel + tuck < 0.01 then return end
-  local a = m.anim.animator
-  local inside = qinv(m.body.move.turn)
-  local ahead, left = rot(inside, v(0, 0, 1)), rot(inside, v(1, 0, 0))
-  local turns = {}
-  for _, b in ipairs(bones) do turns[b.name] = select(2, joint(b.name, a)) end
-  local hip = math.rad(50 * fall + 80 * kneel + 75 * tuck)
-  local knee = math.rad(80 * fall + 110 * kneel + 110 * tuck)
-  for _, s in ipairs({ "L", "R" }) do
-    local thigh, shin = axis_turn(left, -hip), axis_turn(left, -hip + knee)
-    turns["thigh." .. s] = qmul(thigh, turns["thigh." .. s])
-    turns["shin." .. s] = qmul(shin, turns["shin." .. s])
-    turns["foot." .. s] = qmul(shin, turns["foot." .. s])
-    local arm = qmul(axis_turn(ahead, side * math.rad(70) * fall), axis_turn(left, -math.rad(40) * (fall + kneel)))
-    for _, part in ipairs({ "upper_arm.", "forearm.", "hand." }) do turns[part .. s] = qmul(arm, turns[part .. s]) end
-  end
-  local head = axis_turn(ahead, -side * math.rad(35) * fall)
-  turns.neck, turns.head = qmul(head, turns.neck), qmul(head, turns.head)
-  write_pose(turns, (joint("hips", a)), a)
 end
 
 -- A little burst where bat and ball meet.
@@ -560,40 +424,37 @@ local function pose(m, dt)
   blend_pose(m, dt)
   local b = m.body
   b.base = toward(b.base, facing(m, b.move), 1 - math.exp(-12 * dt))
-  -- After a big dive: falling (0.3 s), down (down_for), rising (rise_for): rolls back to a kneel, then stands.
-  local side = b.fall_roll >= 0 and 1 or -1
-  if b.phase == "falling" then
-    b.phase_t = b.phase_t + dt
-    local f = math.min(1, b.phase_t / 0.3)
-    b.roll = lib.lerp(b.roll, b.fall_roll, f)
-    b.fallw, b.kneel, b.sink = f, 0, 0.72 * f                   -- going down onto the floor
-    if f >= 1 then b.phase, b.phase_t = "down", 0 end
-  elseif b.phase == "down" then
-    b.phase_t = b.phase_t + dt
-    b.roll, b.fallw, b.sink = b.fall_roll, 1, 0.72
-    if b.phase_t >= b.down_for then b.phase, b.phase_t = "rising", 0 end
-  elseif b.phase == "rising" then
-    b.phase_t = b.phase_t + dt
-    local r = math.min(1, b.phase_t / b.rise_for)
-    local e = r * r * (3 - 2 * r)
-    b.roll = b.fall_roll * (1 - e)
-    b.fallw = 1 - math.min(1, e * 1.6)
-    b.kneel = math.sin(math.pi * r) * 0.9
-    b.sink = 0.72 * b.fallw + b.kneel * 0.3                       -- up off the floor, through a low kneel
-    if r >= 1 then b.phase, b.fallw, b.kneel, b.sink, b.roll, b.lean = nil, 0, 0, 0, 0, 0 end
-  else
-    b.roll = lib.approach(b.roll, b.air > 0 and b.lean or 0, b.air > 0 and 10 or 5, dt)   -- tipped in the air
-  end
-  local tuck = b.air > 0.05 and math.min(1, b.air / 0.4) * 0.7 * (1 - math.abs(b.lean) / DIVE_LEAN) or 0
-  if b.squat > 0 then tuck = 0.35 end
-  if b.chart and b.air == 0 and b.y < 0 then tuck = math.min(0.6, -b.y / 0.3 * 0.6) end   -- charted crouch, squash
-  bend_limbs(m, b.fallw, b.kneel, tuck, side)
+  -- The flutter: on the way down from a charted jump the torso rolls quickly from side to side, like a falling
+  -- leaf. Looks only: its height still follows the chart.
+  local f = b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1
+  b.flutter = f and f > CHART_PEAK and f < CHART_LAND
+  if b.flutter then b.roll = math.sin((f - CHART_PEAK) / CHART_FPS * FLUTTER_HZ * 2 * math.pi) * FLUTTER_ROLL
+  else b.roll = lib.approach(b.roll, 0, 5, dt) end
+  b.flare = math.max(0, b.flare - dt)
   local ahead = rot(b.base, v(0, 0, 1))
   local half = b.roll / 2
   local roll = { ahead[1] * math.sin(half), ahead[2] * math.sin(half), ahead[3] * math.sin(half), math.cos(half) }
-  b.turn = qmul(roll, b.base)
-  b.pivot = sub(v(0, 0.9, 0), rot(roll, v(0, 0.9, 0)))           -- tip about the hips, not the feet
-  feet(m, dt)
+  -- The lean: its measured speed over the floor tips the top toward where it's going, a little when walking and a
+  -- lot into a dash, easing back upright when it stops.
+  if dt > 0 then
+    local vx, vz = (b.x - (b.px or b.x)) / dt, (b.z - (b.pz or b.z)) / dt
+    local e = 1 - math.exp(-LEAN_EASE * dt)
+    b.lvx, b.lvz = (b.lvx or 0) + (vx - (b.lvx or 0)) * e, (b.lvz or 0) + (vz - (b.lvz or 0)) * e
+  end
+  b.px, b.pz = b.x, b.z
+  local speed = math.sqrt(b.lvx ^ 2 + b.lvz ^ 2)
+  local tilt = roll
+  if speed > 0.01 then
+    local angle = math.min(LEAN_MOST, speed * LEAN_PER_SPEED) / 2
+    local ax, az = b.lvz / speed, -b.lvx / speed                -- up x direction: turning about it tips up that way
+    tilt = qmul({ ax * math.sin(angle), 0, az * math.sin(angle), math.cos(angle) }, roll)
+  end
+  b.turn = qmul(tilt, b.base)
+  b.pivot = sub(v(0, 0.9, 0), rot(tilt, v(0, 0.9, 0)))           -- tip about the hips, not the floor
+  for _, thigh in ipairs(m.legs) do                   -- no legs: a jet torso (the leg bones shrunk to nothing)
+    local t1, t2, t3, q1, q2, q3, q4 = model["local"](dummy, m.anim.animator, thigh)
+    model["local"](dummy, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
+  end
   m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
 end
 
@@ -607,7 +468,17 @@ local function walk(m, dt)
   b.vx, b.vz = vx, vz
   b.x, b.z = b.x + vx * dt, b.z + vz * dt
   b.y = lib.approach(b.y, b.ty, WALK, dt)
-  if b.phase then b.tx, b.tz = b.x, b.z end           -- fallen or getting up: no walking
+  if b.dash then                                      -- a dash: a quick glide, slowing at its end; also in the air
+    local d = b.dash
+    local before = d.t
+    d.t = math.min(DASH_TIME, d.t + dt)
+    local function eased(t) local u = t / DASH_TIME return 1 - (1 - u) * (1 - u) end
+    local step = (eased(d.t) - eased(before)) * DASH_DIST
+    b.x = lib.clamp(b.x + d.x * step, -1.8, 1.8)
+    b.z = m.sign * lib.clamp(m.sign * (b.z + d.z * step), HALF_L + 0.25, HALF_L + 1.8)
+    b.tx, b.tz = b.x, b.z
+    if d.t >= DASH_TIME then b.dash = nil end
+  end
   if b.chart then                                     -- the charted jump: the height is read, not simulated
     local f = math.floor(b.chart * CHART_FPS + 0.5) + 1      -- this step's frame (fixed steps are 1/60 s)
     b.chart = b.chart + dt
@@ -617,32 +488,43 @@ local function walk(m, dt)
       if not walking then b.y = 0 end
     else
       local off = (CHART[f] - CHART_STAND) * CHART_UNIT
-      b.tx, b.tz, b.jx, b.jz, b.vx, b.vz = b.x, b.z, 0, 0, 0, 0   -- straight up and down
+      b.tx, b.tz, b.vx, b.vz = b.x, b.z, 0, 0           -- straight up and down
       if off > 0 then b.air, b.y = off, 0 else b.air, b.y = 0, off end
     end
   end
-  if b.chart then return end
-  if b.squat > 0 then                                 -- the crouch before take-off
-    b.squat = b.squat - dt
-    b.y = -0.08
-    if b.squat <= 0 then b.squat, b.jv, b.air = 0, b.launch, 0.001 end
-  end
-  if b.air > 0 then                                   -- in the air: light and floaty, carried the way it jumped
-    b.jv = math.max(b.jv - AIR_GRAVITY * dt, b.fast and -FAST_FALL or -FALL_MAX)
-    b.air = b.air + b.jv * dt
-    b.x = lib.clamp(b.x + b.jx * dt, -1.8, 1.8)
-    b.z = m.sign * lib.clamp(m.sign * (b.z + b.jz * dt), HALF_L + 0.25, HALF_L + 1.8)
-    b.tx, b.tz, b.vx, b.vz = b.x, b.z, b.jx, b.jz
-    if b.air <= 0 then                                -- landing: a little squash, and a big dive falls over
-      b.air, b.jv, b.jx, b.jz, b.fast, b.air_jumps, b.y = 0, 0, 0, 0, false, AIR_JUMPS, -0.1
-      if b.down_for > 0 then
-        b.phase, b.phase_t = "falling", 0
-        b.fall_roll = (b.lean >= 0 and 1 or -1) * FALL_ROLL
-        b.rise_for = 0.5 + b.down_for * 0.6
-      else
-        b.lean = 0
-      end
+end
+
+-- The jet: a flame out of the bottom of the torso, flickering. For FLARE_TIME after a dash or a jump starts it is
+-- bigger and blue, fading back to orange; while the torso flutters down it sputters. Soft blended particles (not
+-- additive, which vanishes against white cloud), two
+-- triangles each, added to `out` (gfx.particles' eight numbers each).
+local FLAME_BITS, FLAME_LENGTH, FLAME_SIZE = 9, 0.42, 0.21
+local FLAME = { { 1, 0.92, 0.45 }, { 1, 0.45, 0.05 }, { 0.85, 0.1, 0.02 } }      -- core, middle, tip
+local FLARE = { { 0.75, 0.92, 1 }, { 0.15, 0.45, 1 }, { 0.05, 0.12, 0.8 } }
+local function flame(m, out, time)
+  local b = m.body
+  local base = to_world(m, (joint("hips", m.anim.animator)))
+  local down = rot(b.turn, v(0, -1, 0))
+  local k = b.flare / FLARE_TIME
+  k = k * k
+  local length = FLAME_LENGTH * (1 + 1.4 * k) * (0.85 + 0.15 * math.sin(time * 41 + b.x * 7))
+  if b.flutter then length = length * (0.3 + 0.7 * math.abs(math.sin(time * 23))) end
+  local bx, by, bz, dx, dy, dz = base[1], base[2], base[3], down[1], down[2], down[3]
+  for i = 0, FLAME_BITS - 1 do
+    local t = i / (FLAME_BITS - 1)
+    local wob = 0.012 * math.sin(time * 53 + i * 2.3)
+    local along = 0.06 + t * length
+    local c1, c2 = t < 0.5 and FLAME[1] or FLAME[2], t < 0.5 and FLAME[2] or FLAME[3]
+    local f1, f2 = t < 0.5 and FLARE[1] or FLARE[2], t < 0.5 and FLARE[2] or FLARE[3]
+    local u = (t < 0.5 and t or t - 0.5) * 2
+    local n = #out
+    out[n + 1], out[n + 2], out[n + 3] = bx + dx * along + wob, by + dy * along, bz + dz * along - wob
+    out[n + 4] = FLAME_SIZE * (1 - 0.65 * t) * (1 + 0.9 * k)
+    for ch = 1, 3 do                                  -- orange to blue by how much of the flare is left
+      local fire = c1[ch] + (c2[ch] - c1[ch]) * u
+      out[n + 4 + ch] = fire + (f1[ch] + (f2[ch] - f1[ch]) * u - fire) * k
     end
+    out[n + 8] = 0.95 - 0.75 * t
   end
 end
 
@@ -902,39 +784,21 @@ local function swing_now(line)
   end)
 end
 
--- A jump from a flick, as continuous as the angle you flick at: (right, up) is the finger's direction on screen,
--- power 0.5 to 1. The more sideways, the lower, longer and more tipped over it goes; up carries it toward the table,
--- down back from it. How extreme it is (sideways times power) past DOWN_FROM decides how long it stays down.
-local function jump(right, up, power)
-  local b = you.body
-  if b.phase or b.squat > 0 then return end
-  if b.air > 0 then
-    if up < -0.6 then                                 -- a flick down in the air: drop fast
-      b.fast, b.jv = true, math.min(b.jv, -FAST_FALL)
-      return
-    end
-    if b.air_jumps <= 0 then return end
-    b.air_jumps = b.air_jumps - 1                     -- one more jump in mid-air, any direction
-  end
-  local side = right * right                                       -- 0 straight up or down, 1 flat sideways
-  local reach = lib.lerp(JUMP_REACH, DIVE_REACH, side) * power
-  b.jx, b.jz = right * reach, -up * reach * 0.6                   -- screen up is toward the table (-z for you)
-  local launch = (b.air > 0 and AIR_JUMP or JUMP_SPEED) * power * (0.6 + 0.4 * (1 - side))
-  if b.air > 0 then b.jv, b.fast = launch, false else b.launch, b.squat = launch, SQUAT end
-  local ahead = rot(b.base, v(0, 0, 1))
-  local across = cross(ahead, v(0, 1, 0))
-  local toward_side = across[1] * b.jx + across[3] * b.jz
-  b.lean = DIVE_LEAN * side * power * (toward_side >= 0 and 1 or -1)   -- tipped toward where it's going
-  local extreme = side * power
-  b.down_for = extreme > DOWN_FROM and (extreme - DOWN_FROM) / (1 - DOWN_FROM) * DOWN_MOST or 0
-end
-
 -- The charted jump: straight up, following CHART frame by frame.
+local function recovering(b) return b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1 >= CHART_LAND end
 local function chart_jump()
   local b = you.body
-  local recovering = b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1 >= CHART_LAND
-  if b.phase or (b.chart and not recovering) or b.air > 0 or b.squat > 0 then return end
-  b.chart, b.lean, b.down_for = 0, 0, 0                     -- in the recovery: jump again straight away
+  if b.chart and not recovering(b) then return end
+  b.chart, b.flare = 0, FLARE_TIME                          -- in the recovery: jump again straight away
+end
+
+-- A dash: a quick glide along the floor (right, toward the screen's top = toward the table), in the air too, where
+-- it doesn't touch the jump's heights. In a landing recovery it cuts the recovery short.
+local function dash(right, up)
+  local b = you.body
+  if b.dash then return end
+  if recovering(b) then b.chart, b.air = nil, 0 end
+  b.dash, b.flare = { x = right, z = -up, t = 0 }, FLARE_TIME
 end
 
 local function swing_from(line)
@@ -973,13 +837,8 @@ local function fingers(dt)
         d[#d + 1] = { sys.real_time(), t.x, t.y }
         while #d > 2 and sys.real_time() - d[1][1] > 0.1 do table.remove(d, 1) end   -- the last tenth of a second
         local b = you.body
-        if b.air > 0 then                              -- in the air: steer
-          b.jx = lib.clamp(b.jx + t.dx * AIR_STEER, -AIR_SPEED, AIR_SPEED)
-          b.jz = lib.clamp(b.jz + t.dy * AIR_STEER, -AIR_SPEED, AIR_SPEED)
-        elseif not b.phase then                        -- no walking while fallen or getting up
-          b.tx = lib.clamp(b.tx + t.dx * MOVE_SCALE, -1.8, 1.8)
-          b.tz = lib.clamp(b.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
-        end
+        b.tx = lib.clamp(b.tx + t.dx * MOVE_SCALE, -1.8, 1.8)   -- ignored in the air (the jump is straight up)
+        b.tz = lib.clamp(b.tz + t.dy * MOVE_SCALE, HALF_L + 0.25, HALF_L + 1.8)
       elseif lines[t.id] then
         table.insert(lines[t.id], { t.x, t.y })
       end
@@ -992,7 +851,7 @@ local function fingers(dt)
         local vx, vy = (t.x - a[2]) / span, (a[3] - t.y) / span     -- right and up, units a second
         local speed = math.sqrt(vx * vx + vy * vy)
         if speed > FLICK_SPEED then
-          chart_jump()   -- was jump(vx / speed, vy / speed, power): the floaty physics jump, any direction
+          if vy > math.abs(vx) then chart_jump() else dash(vx / speed, vy / speed) end   -- up: jump; else a dash
         end
       end
       drags[t.id] = nil
@@ -1108,9 +967,6 @@ function draw()
   gfx.draw(blob_mesh, -0.2, 0.004, 0, 0, 0, 0, 1, HALF_W * 2 + 0.5, 1, HALF_L * 2 + 0.5, 0.1, 0.14, 0.35, 0.75)
   for _, m in ipairs({ robot, you }) do
     gfx.draw(blob_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.9, 1, 0.7, 0.1, 0.14, 0.35, 0.45 / (1 + m.body.air * 2))
-    for _, leg in ipairs(m.legs) do
-      if leg.plant and m.body.air == 0 then gfx.draw(blob_mesh, leg.plant[1], 0.008, leg.plant[3], 0, 0, 0, 1, 0.3, 1, 0.38, 0.1, 0.14, 0.35, 0.5) end
-    end
   end
   gfx.texture(1, nil)
   gfx.cull(true)
@@ -1136,6 +992,18 @@ function draw()
   gfx.blend("opaque")
   draw_mannequin(robot)
   draw_mannequin(you)
+  local flames = {}
+  flame(robot, flames, sys.real_time())
+  flame(you, flames, sys.real_time())
+  gfx.unlit(true)
+  gfx.blend("alpha")
+  gfx.depth(true, false)
+  gfx.texture(1, blob_tex)
+  gfx.particles(flames)
+  gfx.texture(1, nil)
+  gfx.depth(true, true)
+  gfx.blend("opaque")
+  gfx.unlit(false)
 
   -- The ball: a real lit ball, its shadow straight below it on the table or the floor (always, so you can read
   -- where it is), and the bursts where bat meets ball.
