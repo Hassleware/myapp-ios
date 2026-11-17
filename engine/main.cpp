@@ -424,7 +424,9 @@ void draw_list() {
         // corners and black centred text. The copy behind has every colour inverted.
         auto button = [&](float x, float y0, float w, float h, float k, bool invert) {
             const float RING = 3 * s, RADIUS = 14 * s, ringShade = 0.97f, faceShade = 0.94f;
-            float v = (invert ? 1 - ringShade : ringShade) * k, c[4] = {v, v, v, 1};
+            const float INVERT = 0.5f;   // how far the copy behind goes toward inverted: 1 fully, 0 not at all
+            auto tone = [&](float c) { return invert ? c + (1 - 2 * c) * INVERT : c; };
+            float v = tone(ringShade) * k, c[4] = {v, v, v, 1};
             // The ring: corner arcs joined into one closed outline, each step a quad between outer and inner edge.
             static gfx::Handle white = 0;
             if (!white) { const uint8_t px[4] = {255, 255, 255, 255}; white = gfx::engine_texture(1, 1, px, 0); }
@@ -445,7 +447,7 @@ void draw_list() {
                 }
                 memcpy(prev, cur, sizeof prev);
             }
-            v = (invert ? 1 - faceShade : faceShade) * k;
+            v = tone(faceShade) * k;
             const float f[4] = {v, v, v, 1};
             float o = 2 * RING, r = RADIUS - o, lx = x + o, ly = y0 + o, lw = w - 2 * o, lh = h - 2 * o;
             gfx::rect(lx + r, ly, lw - 2 * r, lh, f);
