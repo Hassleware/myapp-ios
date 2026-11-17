@@ -498,10 +498,45 @@ local function plan_line(m, line, serving)
   end)
 end
 
+-- A turn from three axes (where the turn sends x, y and z), as a quaternion.
+local function axes_turn(x, y, z)
+  local tr = x[1] + y[2] + z[3]
+  if tr > 0 then
+    local s4 = math.sqrt(tr + 1) * 2
+    return { (y[3] - z[2]) / s4, (z[1] - x[3]) / s4, (x[2] - y[1]) / s4, s4 / 4 }
+  elseif x[1] > y[2] and x[1] > z[3] then
+    local s4 = math.sqrt(1 + x[1] - y[2] - z[3]) * 2
+    return { s4 / 4, (y[1] + x[2]) / s4, (z[1] + x[3]) / s4, (y[3] - z[2]) / s4 }
+  elseif y[2] > z[3] then
+    local s4 = math.sqrt(1 + y[2] - x[1] - z[3]) * 2
+    return { (y[1] + x[2]) / s4, s4 / 4, (z[2] + y[3]) / s4, (z[1] - x[3]) / s4 }
+  end
+  local s4 = math.sqrt(1 + z[3] - x[1] - y[2]) * 2
+  return { (z[1] + x[3]) / s4, (z[2] + y[3]) / s4, s4 / 4, (x[2] - y[1]) / s4 }
+end
+
+-- Holding the ball for a serve: the serving hand turns (by weight w, 0 to 1) so its bat lies flat, face up, still
+-- pointing the way it did, and the ball rests on top. The blade runs along the bat's x and faces along its z
+-- (tools/blender_bats.py).
+local function flat_bat(m, side, w)
+  if w <= 0 then return end
+  local a, hand = m.anim.animator, hands[side]
+  local _, turn = joint(hand.bone, a)
+  local t = qmul(qmul(m.body.turn, turn), hand.offset)          -- the bat's turn in the world, as animated
+  local x, z = rot(t, v(1, 0, 0)), rot(t, v(0, 0, 1))
+  local h = math.sqrt(x[1] * x[1] + x[3] * x[3])
+  if h < 1e-3 then x, h = rot(m.body.turn, v(0, 0, 1)), 1 end
+  x = v(x[1] / h, 0, x[3] / h)
+  local up = v(0, z[2] >= 0 and 1 or -1, 0)                   -- whichever face is nearer up stays up
+  local flat = qmul(qmul(qinv(m.body.turn), axes_turn(x, cross(up, x), up)), qinv(hand.offset))
+  local new = { lib.quat_slerp(turn[1], turn[2], turn[3], turn[4], flat[1], flat[2], flat[3], flat[4], w) }
+  set_turn(hand.bone, select(2, joint("forearm." .. side, a)), new, a)
+end
+
 -- Where the top of a bat's blade is in the world, for the ball to rest on.
 local function on_bat(m, side)
   local b = to_world(m, blade_in_model(side, m.anim.animator))
-  return v(b[1], b[2] + R + 0.012, b[3])
+  return v(b[1], b[2] + R + 0.006, b[3])   -- on the rubber (the blade is about a centimetre thick)
 end
 
 -- A little burst where bat and ball meet.
@@ -545,6 +580,9 @@ local function pose(m, dt)
     local t1, t2, t3, q1, q2, q3, q4 = model["local"](dummy, m.anim.animator, thigh)
     model["local"](dummy, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
   end
+  local holding = state == "serve" and (server == "cpu") == (m == robot)
+  m.flat = lib.approach(m.flat or 0, holding and 1 or 0, 12, dt)   -- eases in and out: no snap at the toss
+  flat_bat(m, m.serve_hand, m.flat)
   m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
 end
 
