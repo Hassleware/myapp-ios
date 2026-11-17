@@ -114,8 +114,9 @@ local CONTACT = 2.0                  -- seconds into every shot clip that the ba
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
 local HIT_RANGE = 0.13               -- the ball's centre this close to the blade's: the bat meets it (the robot's)
-local YOUR_HIT_RANGE, YOUR_LEAD = 0.18, 0.12   -- yours is more forgiving, and your swing may start this late before
-                                              -- contact (part-way through its wind-up), so a line after a dash still hits
+local YOUR_HIT_RANGE, YOUR_LEAD = 0.18, 0.05   -- yours is more forgiving, and your swing may start this late before
+                                               -- contact (its wind-up sped up: play_swing), so a late line still hits
+local YOUR_AIR_TOL = 0.2                       -- in a jump, your swing takes a ball this far above or below its height
 local TOP_SPEED = 2.2                -- metres a second: the body can't outrun its feet
 
 local chart = include("chart.lua")   -- the charted jump: heights a frame, and what is worked out from them
@@ -314,13 +315,13 @@ local function blade_offset(m, move) return rot(m.face, move.blade) end
 local function keep_pose(m)
   local turns = {}
   for _, b in ipairs(bones) do turns[b.name] = select(2, joint(b.name, m.anim.animator)) end
-  m.blend.from, m.blend.t = { turns = turns, hips = (joint("hips", m.anim.animator)) }, 0
+  m.blend.from, m.blend.t, m.blend.time = { turns = turns, hips = (joint("hips", m.anim.animator)) }, 0, nil
 end
 
 local function blend_pose(m, dt)
   local blend = m.blend
   if not blend.from then return end
-  blend.t = blend.t + dt / BLEND_TIME
+  blend.t = blend.t + dt / (blend.time or BLEND_TIME)
   if blend.t >= 1 then blend.from = nil return end
   local w = blend.t * blend.t * (3 - 2 * blend.t)
   local turns = {}
@@ -387,6 +388,21 @@ local function dash(m, dx, dz, dist, time)
   b.dash, b.flare = { x = dx, z = dz, t = 0, dist = dist or DASH_DIST, time = time or DASH_TIME }, FLARE_TIME
 end
 
+-- Starts a shot so its hit lands t seconds from now. With time to spare it plays at its own speed (slower if t is
+-- longer than the wind-up); with little time the last WINDUP seconds of wind-up play sped up (up to WINDUP / 0.05,
+-- nine times), so a late swing still visibly swings at once, and the blend into it is as quick.
+local WINDUP = 0.45
+local function play_swing(m, clip, t)
+  m.anim.layers = {}
+  if t >= WINDUP then
+    m.anim:play(clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - t), speed = t > CONTACT and CONTACT / t or 1 })
+  else
+    t = math.max(t, 0.05)
+    m.anim:play(clip, { loop = false, restart = true, fade = 0, time = CONTACT - WINDUP, speed = WINDUP / t })
+    m.blend.time = math.min(BLEND_TIME, t * 0.3)
+  end
+end
+
 -- Picks the best (move, point) by cost(move, point, fit, run, blade offset), fit being how far the bat would be off
 -- the ball's height (crouching counts a little), then starts it. The body can meet a point three ways:
 --   on the ground, crouching up to CROUCH;
@@ -435,7 +451,7 @@ local function choose_and_swing(m, points, cost_of, hand, lead, peek)
           local dash = false                                        -- in the air the jet drifts AIR_DRIFT to line up
           if run > AIR_DRIFT then dash = assist and dash_need(run, 0, t) or nil end
           local miss = math.abs(chart.air[fc] - need)
-          if dash ~= nil and miss <= chart.air_tol then
+          if dash ~= nil and miss <= (assist and chart.air_tol or YOUR_AIR_TOL) then
             local cost = cost_of(move, p, miss, run, off) + (dash and DASH_COST or 0)
             if cost < best_cost then best, at, best_cost, how, best_sink, best_delay, best_dash = move, p, cost, "air", 0, nil, dash end
           end
@@ -483,8 +499,7 @@ local function choose_and_swing(m, points, cost_of, hand, lead, peek)
   if how == "jump" then b.jump_in = best_delay end
   m.anim.layers = {}
   local t = at.t - waited                                         -- from now, after the time spent planning
-  m.anim:play(best.clip, { loop = false, restart = true, fade = 0, time = math.max(0, CONTACT - t),
-                           speed = t > CONTACT and CONTACT / t or 1 })
+  play_swing(m, best.clip, t)
   return true
 end
 
@@ -1181,6 +1196,21 @@ end
 local MOVE_SCALE = 0.006             -- metres the body moves for each unit the finger moves
 local drags, lines, drawn = {}, {}, {}   -- fingers walking, lines being drawn, finished lines fading out
 
+-- A swipe that no swing can meet the ball with still swings, at once, the way you swiped (a miss you can see).
+local function whiff(m, line)
+  if m.armed or line.whiffed then return end
+  line.whiffed = true
+  local best, like = nil, -9
+  for _, move in ipairs(moves) do
+    local l = move.swing[1] * line.right + move.swing[2] * line.up
+    if l > like then best, like = move, l end
+  end
+  if not best then return end
+  keep_pose(m)
+  m.body.move = best
+  play_swing(m, best.clip, 0.25)
+end
+
 local function swing_from(line)
   if state == "serve" and server == "player" then
     -- Your serve, first line: the toss. The ball pops up off your bat.
@@ -1196,7 +1226,7 @@ local function swing_from(line)
   elseif state == "rally" then
     you.aim = line
     if last == "cpu" then
-      start_plan(you, function() return plan_line(you, line, false) end, function(ok) if not ok then you.pending = line end end)
+      start_plan(you, function() return plan_line(you, line, false) end, function(ok) if not ok then you.pending = line whiff(you, line) end end)
     else
       you.pending = line                      -- drawn early: it's played as soon as the robot has hit
     end
@@ -1292,7 +1322,9 @@ function fixed_update(dt)
       you.retry_at = sys.time() + PLAN_RETRY
       local line = you.pending
       you.pending = nil
-      start_plan(you, function() return plan_line(you, line, false) end, function(ok) if not ok and not you.pending then you.pending = line end end)
+      start_plan(you, function() return plan_line(you, line, false) end, function(ok)
+        if not ok and not you.pending then you.pending = line whiff(you, line) end
+      end)
     end
   end
   walk(robot, dt)
