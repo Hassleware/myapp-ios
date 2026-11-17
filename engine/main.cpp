@@ -10,6 +10,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -459,7 +460,10 @@ void draw_list() {
         float k = 1 - PRESS_DARKEN * shade[i];
         button(bx + in, by + in, bw - 2 * in, bh - 2 * in, k, false);
         const float label[4] = {0.05f * k, 0.05f * k, 0.05f * k, 1};
-        gfx::text(name, cx - gfx::text_width(name, 24 * s) / 2, cy - 12 * s, 24 * s, label);
+        std::string shown = name;   // "dream-table" is shown as "Dream table"
+        std::replace(shown.begin(), shown.end(), '-', ' ');
+        if (!shown.empty()) shown[0] = (char)std::toupper((unsigned char)shown[0]);
+        gfx::text(shown, cx - gfx::text_width(shown, 24 * s) / 2, cy - 12 * s, 24 * s, label);
         y += 84;
     }
     if (games.empty()) gfx::text("No games here yet.", left + 8, y + 10, 22, dim);
