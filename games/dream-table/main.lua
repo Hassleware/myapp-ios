@@ -422,7 +422,7 @@ local function dash_need(run, walk_time, t)    -- false: walking will do; true: 
   if t >= DASH_TIME and run <= DASH_DIST + walk_reach(walk_time - DASH_TIME) then return true end
   return nil
 end
-local function choose_and_swing(m, points, cost_of, hand, lead)
+local function choose_and_swing(m, points, cost_of, hand, lead, peek)
   lead = lead or 0.3                                             -- the least time to swing in (a serve: less)
   local b = m.body
   local f_now = b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1
@@ -473,6 +473,10 @@ local function choose_and_swing(m, points, cost_of, hand, lead)
     ::next_move::
   end
   if not best then return false end
+  if peek then                                                   -- only looking (the hints): say what it would do
+    local off = blade_offset(m, best)
+    return { x = at.x - off[1], z = at.z - off[3], how = how, dash = best_dash, delay = best_delay, contact = at.t - waited }
+  end
   m.used[best] = (m.used[best] or 0) + 1
   keep_pose(m)
   b.move, m.armed = best, true
@@ -498,6 +502,22 @@ local function plan_robot(m, serve_hand)
     return fit * 3 + run * (serve_hand and 1.5 or 0.3)
            + (m.used[move] or 0) * 0.35 + math.random() * 0.05
   end, serve_hand)
+end
+
+-- Hints, once the robot has hit: where to stand for the cleanest return, and whether it calls for a jump (and
+-- when) or a dash (and which way). Worked out like your own swing would be, without making it.
+local hint = nil
+local function start_hint()
+  hint = nil
+  if you.pending then return end          -- your swing is already waiting: it plans this itself (and twice the search
+                                          -- in the same frames would break the Lua budget)
+  start_plan("hint", function()
+    return choose_and_swing(you, flight(you, false), function(move, p, fit, run) return fit * 3 + run * 0.8 end, nil, nil, true)
+  end, function(r)
+    if not r then return end
+    local now = sys.time()
+    hint = { x = r.x, z = r.z, how = r.how, dash = r.dash, jump_at = r.delay and now + r.delay, contact_at = now + r.contact }
+  end)
 end
 
 -- Your choice, from the line you drew: the move whose recorded swing runs most like the line, that can meet the
@@ -943,6 +963,7 @@ local function player_hit(serving)
   local tz = -(0.45 + 0.8 * power)
   local served = serving and serve_shot(ball.x, ball.y, ball.z, tx, 0.5 + 0.6 * power)
   if serving then rate_serve(you.serve_rating or "okay") end
+  hint = nil
   if served then hit("player", served[1], served[2], served[3], true)
   else hit("player", shot(ball.x, ball.y, ball.z, tx, tz, 0.85 - 0.35 * power)) end
   you.armed, you.body.ty, you.body.goal = false, 0, nil
@@ -969,6 +990,7 @@ local function cpu_hit(serving)
     say("WIDE BALL - DASH!")
   else hit("cpu", shot(ball.x, ball.y, ball.z, tx, 0.7 + math.random() * 0.2, 0.8)) end
   robot.armed, robot.body.ty, robot.body.goal = false, 0, nil
+  start_hint()
 end
 
 -- ---------------------------------------------------------------- points and serving
@@ -998,6 +1020,7 @@ local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
   ball.call, ball.kick = nil, nil                       -- a sky or wide ball's call ends with its point
+  hint = nil
   you.armed, robot.armed, you.pending = false, false, nil
   for _, m in ipairs({ you, robot }) do                 -- back to their spots behind the table to serve or receive
     m.body.tx, m.body.tz, m.body.goal = lib.clamp(m.body.x, -0.6, 0.6), m.sign * (HALF_L + 0.6), nil
@@ -1277,6 +1300,20 @@ function draw()
   for _, m in ipairs({ robot, you }) do
     gfx.draw(blob_mesh, m.body.x, 0.006, m.body.z, 0, 0, 0, 1, 0.9, 1, 0.7, 0.1, 0.14, 0.35, 0.45 / (1 + m.body.air * 2))
   end
+  -- Where to stand: a glowing spot on the floor (pink once you're on it), a ring of lights closing on it as the
+  -- ball arrives.
+  if hint and state == "rally" and last == "cpu" then
+    local now = sys.time()
+    local on = math.sqrt((you.body.x - hint.x) ^ 2 + (you.body.z - hint.z) ^ 2) < 0.15
+    local r, g, bl = 1, on and 0.45 or 0.85, on and 0.8 or 0.25
+    local pulse = 0.85 + 0.15 * math.sin(now * 12)
+    gfx.draw(blob_mesh, hint.x, 0.012, hint.z, 0, 0, 0, 1, 0.6 * pulse, 1, 0.6 * pulse, r, g, bl, 0.85)
+    local ring = 0.3 + math.min(0.8, math.max(0, hint.contact_at - now) * 0.9)
+    for k = 0, 11 do
+      local a = k / 12 * math.pi * 2 + now * 2
+      gfx.draw(blob_mesh, hint.x + math.cos(a) * ring, 0.013, hint.z + math.sin(a) * ring, 0, 0, 0, 1, 0.12, 1, 0.12, r, g, bl, 0.9)
+    end
+  end
   gfx.texture(1, nil)
   gfx.cull(true)
   gfx.depth(true, true)
@@ -1399,6 +1436,31 @@ function draw()
   if center then center = words(center) text(center, (w - text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
     text(words(message), (w - text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
+  end
+  -- When to jump: a ring of lights closing on your torso, then "Jump!" on the frame to go. Which way to dash.
+  if hint and state == "rally" and last == "cpu" then
+    local now = sys.time()
+    local sx, sy = gfx.project(you.body.x, height(you) + 1.1, you.body.z)
+    if hint.how == "jump" and hint.jump_at and sx and not (you.body.chart and not recovering(you.body)) then
+      local wait = hint.jump_at - now
+      if wait > 0.12 then
+        local rr = 40 + wait * 160
+        for k = 0, 15 do
+          local a = k / 16 * math.pi * 2
+          gfx.image(blob_tex, sx + math.cos(a) * rr - 7, sy + math.sin(a) * rr - 7, 14, 14, 0.5, 0.9, 1, 0.9)
+        end
+        text("Jump", sx - text_width("Jump", 24) / 2, sy - rr - 34, 24, 0.6, 0.9, 1)
+      elseif wait > -0.15 then
+        local size = 64 + 20 * math.sin(now * 30)
+        text("Jump!", sx - text_width("Jump!", size) / 2, sy - 110, size, 0.5, 0.9, 1)
+      end
+    end
+    local on = math.sqrt((you.body.x - hint.x) ^ 2 + (you.body.z - hint.z) ^ 2) < 0.3
+    if hint.dash and not on and not you.body.dash then
+      local word = hint.x < you.body.x and "<< Dash" or "Dash >>"
+      local size = 44 + 6 * math.sin(now * 16)
+      text(word, (w - text_width(word, size)) / 2, h * 0.62, size, 1, 0.6, 0.25)
+    end
   end
   local frame_dt = math.min(0.1, sys.real_time() - (meter.at or sys.real_time()))
   meter.at = sys.real_time()
