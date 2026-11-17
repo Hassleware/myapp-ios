@@ -28,7 +28,7 @@ local BOUNCE = 0.86                   -- how much height a bounce keeps
 local ball = { x = 0, y = 1, z = 0, vx = 0, vy = 0, vz = 0 }
 local score = { player = 0, cpu = 0 }
 local wins = save.get("wins", 0)
-local font = gfx.load_font("MyDotFont.ttf", 64)   -- your own dot font, for every word on screen
+local bitfont = include("bitfont.lua")   -- your own dot font, baked with its outline (tools/make_bitmap_font.py)
 local trail = {}                      -- where the ball was, newest first, one every TRAIL_STEP seconds
 local TRAIL_STEP, TRAIL_WIDTH = 1 / 30, 0.05
 local trail_clock = 0
@@ -1040,19 +1040,7 @@ end
 -- ---------------------------------------------------------------- drawing
 
 -- Text with a black outline: the words drawn in black around it, then in colour on top.
--- A soft drop shadow, then the outline in six directions (round, with no gaps at the letters' sides), then the
--- words. The outline grows with the text. Eight copies of each letter: budget.lua counts them.
-local OUTLINE = 0.11   -- outline thickness, as a share of the text's size
-local function text(s, x, y, size, r, g, b, a)
-  a = a or 1
-  local o = math.max(1.5, size * OUTLINE)
-  gfx.text(s, x + o * 0.6, y + o * 1.6, size, 0.05, 0.08, 0.25, a * 0.45)
-  for k = 0, 5 do
-    local angle = k / 6 * math.pi * 2 + math.pi / 6
-    gfx.text(s, x + math.cos(angle) * o, y + math.sin(angle) * o, size, 0.04, 0.03, 0.1, a)
-  end
-  gfx.text(s, x, y, size, r, g, b, a)
-end
+local text, text_width = bitfont.draw, bitfont.width
 
 function draw()
   gfx.clear(scenery.FOG[1], scenery.FOG[2], scenery.FOG[3])
@@ -1158,25 +1146,24 @@ function draw()
   gfx.rect(w / 2 - 1, h * 0.55, 2, h * 0.3, 1, 1, 1, 0.08)   -- where walking ends and swinging begins
 
   -- Score and messages, in your dot font.
-  gfx.font(font)
   local left, top, right, bottom = gfx.safe()
   text("DREAM TABLE", left + 80, top + 20, 26, 0.85, 0.75, 1)
   local board = words(string.format("YOU %d  -  %d CPU", score.player, score.cpu))
-  text(board, w - right - gfx.text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
+  text(board, w - right - text_width(board, 30) - 24, top + 20, 30, 1, 1, 1)
   local serving = words((state == "serve" or state == "point") and (serve_turn() == "player" and "YOUR SERVE" or "CPU SERVES") or "")
-  text(serving, w - right - gfx.text_width(serving, 20) - 24, top + 62, 20, 0.85, 0.9, 1)
+  text(serving, w - right - text_width(serving, 20) - 24, top + 62, 20, 0.85, 0.9, 1)
   if wins > 0 then text(words("WINS " .. wins), left + 80, top + 58, 20, 0.85, 0.9, 1) end
 
   local center = nil
   if state == "serve" and server == "player" then center = "DRAW A LINE TO TOSS" end
   if state == "toss" and server == "player" and not you.armed then center = "DRAW AGAIN TO HIT IT" end
   if state == "over" then center = message .. "   TAP TO PLAY AGAIN" end
-  if center then center = words(center) text(center, (w - gfx.text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
+  if center then center = words(center) text(center, (w - text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
-    text(words(message), (w - gfx.text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
+    text(words(message), (w - text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
   local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
-  text(walk_hint, w * 0.25 - gfx.text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
-  text(swing_hint, w * 0.75 - gfx.text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  text(walk_hint, w * 0.25 - text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
+  text(swing_hint, w * 0.75 - text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
   budget.draw(left + 16, top + 100)
 end
