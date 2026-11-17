@@ -7,9 +7,11 @@
 -- up and it jumps straight up, following the charted heights (CHART); flick any other way and it dashes that way.
 -- Both mannequins have no legs: they are jet torsos, a flame under the hips that flares big and blue as a dash or a
 -- jump starts, and sputters while the torso flutters on the way down from a jump.
--- Your serve, as in real table tennis: the first line tosses the ball up off your bat; the second is the swing, and
--- you time it: the bat meets the ball where it will be SWING_LEAD seconds after you finish drawing. The serve must
--- bounce on your side, then on the other. Miss it and it's the robot's point.
+-- Your serve, as in real table tennis: the first line tosses the ball up off your bat, and the charge meter on the
+-- right fills as it rises (full at the top). The second line is the swing: drawn any time before the ball falls back,
+-- the bat is planned onto the falling ball like any return, and the charge when you drew sets the serve's power. A
+-- star falls down the meter with the ball: swing before it reaches the bottom. The serve must bounce on your
+-- side, then on the other. Miss it and it's the robot's point.
 -- The far mannequin is a polite robot that can't lose.
 -- Rules: first to 11, win by 2, serve changes every 2 points (every point from 10-10).
 -- ponytail: serves go straight to the other side (no first bounce on your own side) and there is no spin.
@@ -147,16 +149,21 @@ local FLUTTER_HZ, FLUTTER_ROLL = 7, math.rad(12)   -- the fall's flutter: wobble
 local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump or dash, slower a walk
 local DASH_DIST, DASH_TIME = 1.6, 0.22    -- a dash covers this far (metres) this quickly (seconds)
 local FLARE_TIME = 0.4               -- the flame's big blue flare when a dash or jump starts fades over this long
+local COURT_BACK = HALF_L + 1.8        -- and how far back from the net (as for walking)
 local COURT_X = 2.2                  -- how far either side a body may go (metres): room to dash for wide balls
 local JUMP_COST, DASH_COST = 0.35, 0.25   -- planning: how much a swing that needs a jump or a dash is avoided
 local SKY_CHANCE, WIDE_CHANCE = 0.25, 0.25   -- the robot's fantasy returns: a sky ball (jump!) or a wide ball (dash!)
 local WIDE_KICK = 5.5                -- a wide ball's sideways kick off its bounce (m/s): spin, in a dream
 local LEAN_PER_SPEED, LEAN_MOST = math.rad(4), math.rad(30)   -- tilt toward where it's going: per m/s, and at most
 local LEAN_EASE = 10                 -- how quickly the tilt follows (bigger is quicker); it eases back upright
-local SWING_LEAD = 0.32              -- your serve swing meets the ball this long after you finish the line
 local WALK = 7                       -- how quickly a body heads for its spot (bigger is quicker)
 local CROUCH = 0.3                   -- how far a body may sink (knees bending) to play a high shot on a lower ball
-local TOSS = 2.6                     -- how fast the flick sends the ball up to be served (metres a second)
+local TOSS = 2.6                     -- how fast the robot's flick sends the ball up to be served (metres a second)
+local SERVE_REACH = 0.8               -- a late serve swing: the torso glides this far into place, however short the time
+local SERVE_LAST = 0.75               -- the star lands when the ball has fallen to this far above where it was tossed:
+                                     -- the last moment a swing still meets it cleanly (about 0.65 s after the toss)
+local SERVE_LEAD = 0.1                -- your serve may start its swing part-way through: in time until the star lands
+local SERVE_TOSS = 3.6               -- your toss: higher, so there's time to charge and still swing (0.48 s up)
 local BLEND_TIME = 0.18              -- switching moves: every bone blends from the old pose over this long
 local moves, hands, bones, effects = {}, {}, {}, {}
 local rest = {}                      -- every bone's turn in the T-pose
@@ -391,11 +398,11 @@ end
 -- A dash: a quick glide along the floor, direction (dx, dz) in the world, dist metres (DASH_DIST if not given),
 -- in the air too, where it doesn't touch the jump's heights. Once it's done the body walks on to b.goal, the spot
 -- the latest plan wants (if any). In a landing recovery it cuts the recovery short.
-local function dash(m, dx, dz, dist)
+local function dash(m, dx, dz, dist, time)
   local b = m.body
   if b.dash then return end
   if recovering(b) then b.chart, b.air = nil, 0 end
-  b.dash, b.flare = { x = dx, z = dz, t = 0, dist = dist or DASH_DIST }, FLARE_TIME
+  b.dash, b.flare = { x = dx, z = dz, t = 0, dist = dist or DASH_DIST, time = time or DASH_TIME }, FLARE_TIME
 end
 
 -- Picks the best (move, point) by cost(move, point, fit, run, blade offset), fit being how far the bat would be off
@@ -413,7 +420,8 @@ local function dash_need(run, walk_time, t)    -- false: walking will do; true: 
   if t >= DASH_TIME and run <= DASH_DIST + walk_reach(walk_time - DASH_TIME) then return true end
   return nil
 end
-local function choose_and_swing(m, points, cost_of, hand)
+local function choose_and_swing(m, points, cost_of, hand, lead)
+  lead = lead or 0.3                                             -- the least time to swing in (a serve: less)
   local b = m.body
   local f_now = b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1
   local flying = f_now and f_now < CHART_LAND
@@ -427,7 +435,7 @@ local function choose_and_swing(m, points, cost_of, hand)
     for _, p in ipairs(points) do
       local t = p.t - waited
       local sx, sz = p.x - off[1], p.z - off[3]                  -- where the body would be
-      if sz * m.sign > HALF_L + 0.2 and t > 0.3 and math.abs(sx) <= COURT_X then   -- behind the table, in time
+      if sz * m.sign > HALF_L + 0.2 and sz * m.sign < COURT_BACK and t > lead and math.abs(sx) <= COURT_X then   -- on court, in time
         local run = math.sqrt((sx - b.x) ^ 2 + (sz - b.z) ^ 2)
         local need = p.y - off[2]                                  -- how high the body must be at contact
         local fc = f_now and f_now + math.floor(t * CHART_FPS + 0.5)
@@ -441,6 +449,7 @@ local function choose_and_swing(m, points, cost_of, hand)
         elseif not sky and not (flying and fc < CHART_LAND) then   -- on the ground
           local sink = math.max(-CROUCH, math.min(0, need))
           local dash = dash_need(run, t, t)
+          if dash == nil and lead < 0.3 and run <= SERVE_REACH then dash = true end   -- a serve: glide into place
           if dash ~= nil then
             local cost = cost_of(move, p, math.abs(need - sink) - sink * 0.1, run, off) + (dash and DASH_COST or 0)
             if cost < best_cost then best, at, best_cost, how, best_sink, best_delay, best_dash = move, p, cost, "ground", sink, nil, dash end
@@ -471,7 +480,7 @@ local function choose_and_swing(m, points, cost_of, hand)
   if best_dash then                                              -- dash toward the spot (then walk the rest)
     local dx, dz = sx - b.x, sz - b.z
     local run = math.sqrt(dx * dx + dz * dz)
-    dash(m, dx / run, dz / run, math.min(run, DASH_DIST))
+    dash(m, dx / run, dz / run, math.min(run, DASH_DIST), math.min(DASH_TIME, (at.t - waited) * 0.7))
   end
   if how == "jump" then b.jump_in = best_delay end
   m.anim.layers = {}
@@ -495,7 +504,7 @@ local function plan_line(m, line, serving)
   return choose_and_swing(m, flight(m, serving), function(move, p, fit, run, off)
     local likeness = move.swing[1] * line.right + move.swing[2] * line.up   -- 1: the same direction
     return (1 - likeness) * 2.5 + fit * 3 + run * 0.8
-  end)
+  end, nil, serving and SERVE_LEAD)
 end
 
 -- A turn from three axes (where the turn sends x, y and z), as a quaternion.
@@ -583,7 +592,9 @@ local function pose(m, dt)
   local holding = state == "serve" and (server == "cpu") == (m == robot)
   m.flat = lib.approach(m.flat or 0, holding and 1 or 0, 12, dt)   -- eases in and out: no snap at the toss
   flat_bat(m, m.serve_hand, m.flat)
-  m.body.blade = to_world(m, blade_in_model(m.body.move.hand, m.anim.animator))
+  -- Where the bat meets the ball, for play: from the upright body (the lean and the flutter are looks only, and
+  -- would otherwise carry the bat off a ball the plan timed for an upright body).
+  m.body.blade = add(v(b.x, height(m), b.z), rot(b.base, blade_in_model(m.body.move.hand, m.anim.animator)))
 end
 
 -- Its body heads for its spot.
@@ -614,13 +625,13 @@ local function walk(m, dt)
   if b.dash then                                      -- a dash: a quick glide, slowing at its end; also in the air
     local d = b.dash
     local before = d.t
-    d.t = math.min(DASH_TIME, d.t + dt)
-    local function eased(t) local u = t / DASH_TIME return 1 - (1 - u) * (1 - u) end
+    d.t = math.min(d.time, d.t + dt)
+    local function eased(t) local u = t / d.time return 1 - (1 - u) * (1 - u) end
     local step = (eased(d.t) - eased(before)) * d.dist
     b.x = lib.clamp(b.x + d.x * step, -COURT_X, COURT_X)
     b.z = m.sign * lib.clamp(m.sign * (b.z + d.z * step), HALF_L + 0.25, HALF_L + 1.8)
     b.tx, b.tz = b.x, b.z
-    if d.t >= DASH_TIME then
+    if d.t >= d.time then
       b.dash = nil
       if b.goal then b.tx, b.tz = b.goal[1], b.goal[2] end   -- a plan's spot: walk the rest of the way
     end
@@ -636,6 +647,69 @@ local function walk(m, dt)
       local off = (CHART[f] - CHART_STAND) * CHART_UNIT
       if off > 0 then b.air, b.y = off, 0 else b.air, b.y = 0, off end
     end
+  end
+end
+
+-- Your serve's charge, 0 to 1: how far up the toss has gone (full at the top, and it stays full on the way down).
+local function serve_charge()
+  if state ~= "toss" or server ~= "player" then return 0 end
+  return ball.vy > 0 and 1 - ball.vy / SERVE_TOSS or 1
+end
+
+-- The serve meter: a column of soft dots on the right edge that slides in for your serve and out once it's hit.
+-- The dots fill with the charge, cool blue to gold to red-hot, and pulse when full; once the ball is falling a star
+-- with a sparkle trail drops down the column with it, reaching the bottom at the last moment to swing (SERVE_LAST).
+local METER_DOTS, METER_GAP, METER_DOT = 14, 26, 18
+local meter = { show = 0, star = 0 }
+local function meter_colour(t)                     -- 0 at the bottom dot, 1 at the top
+  if t < 0.5 then return 0.3 + 1.4 * t, 0.75 + 0.2 * t, 1 - 1.4 * t end
+  return 1, 0.85 - 1.1 * (t - 0.5), 0.3 - 0.4 * (t - 0.5)
+end
+local function draw_meter(tex, w, h, right, now, dt)
+  local wanted = server == "player" and (state == "serve" or state == "toss") and not (state == "toss" and you.armed and ball.vy < -3)
+  meter.show = lib.approach(meter.show, wanted and 1 or 0, 9, dt)
+  if meter.show < 0.01 then return end
+  local slide = 1 - meter.show
+  slide = slide * slide * (3 - 2 * slide)
+  local col_h = (METER_DOTS - 1) * METER_GAP
+  local x = w - right - 52 + slide * 140               -- slides in from beyond the right edge
+  local y0 = h * 0.5 - col_h / 2                       -- the top dot
+  local charge = serve_charge()
+  local full = charge >= 0.999
+  gfx.rect(x - 22, y0 - 34, 44, col_h + 68, 0.04, 0.06, 0.18, 0.45 * meter.show)
+  local lit = charge * METER_DOTS
+  for i = 0, METER_DOTS - 1 do
+    local from_bottom = METER_DOTS - 1 - i
+    local cy = y0 + i * METER_GAP
+    local on = math.min(1, math.max(0, lit - from_bottom))
+    local r, g, b = meter_colour(from_bottom / (METER_DOTS - 1))
+    local size = METER_DOT * (on > 0 and (1 + 0.25 * on) or 0.8)
+    gfx.image(tex, x - size / 2, cy - size / 2, size, size, 1, 1, 1, 0.16 * meter.show)        -- the empty dot
+    if on > 0 then
+      if full then                                     -- full: a white-hot pulse running up the column, and a glow
+        local pulse = 0.5 + 0.5 * math.sin(now * 14 - from_bottom * 0.6)
+        r, g, b = r + (1 - r) * pulse * 0.7, g + (1 - g) * pulse * 0.7, b + (0.9 - b) * pulse * 0.7
+        local glow = size * (1.8 + 0.4 * pulse)
+        gfx.image(tex, x - glow / 2, cy - glow / 2, glow, glow, r, g, b, 0.35 * meter.show)
+      end
+      gfx.image(tex, x - size / 2, cy - size / 2, size, size, r, g, b, on * meter.show)
+    end
+  end
+  -- The star: from the top once the ball turns over, down to the bottom as it falls back to the bat.
+  if state == "toss" and ball.vy <= 0 and you.toss_y then
+    local apex = you.toss_y + SERVE_TOSS * SERVE_TOSS / (2 * G)
+    meter.star = math.min(1, math.max(0, (apex - ball.y) / (apex - you.toss_y - SERVE_LAST)))
+    local sy = y0 + meter.star * col_h
+    for k = 1, 4 do                                    -- the sparkle trail above it
+      local ty = sy - k * 14
+      if ty > y0 - 10 then
+        local s = 10 - k * 2
+        gfx.image(tex, x - s / 2 + math.sin(now * 20 + k) * 3, ty - s / 2, s, s, 1, 0.95, 0.6, (0.7 - k * 0.15) * meter.show)
+      end
+    end
+    local spin = 1 + 0.15 * math.sin(now * 18)
+    gfx.image(tex, x - 30 * spin, sy - 30 * spin, 60 * spin, 60 * spin, 1, 0.9, 0.4, 0.55 * meter.show)   -- its glow
+    bitfont.draw("*", x - 24 * spin, sy - 34 * spin, 72 * spin, 1, 0.96, 0.5, meter.show)
   end
 end
 
@@ -735,27 +809,58 @@ end
 -- A serve: the ball must bounce once on the server's side, then once on the other. Tries landing spots on the
 -- server's side and flight times, follows each through its bounce, and keeps the one whose second bounce lands
 -- nearest depth metres past the net, toward tx, clearing the net.
+-- Plays a serve through the same ball physics as step_ball (half steps of a 1/60 s tick): true if it bounces once
+-- on the server's side, clears the net and lands on the other side.
+local function serve_ok(px, py, pz, vx, vy, vz)
+  local own, dt, x, y, z, first = pz > 0 and 1 or -1, 1 / 120, px, py, pz, false
+  for _ = 1, 360 do
+    local ox, oz = x, z
+    local oy = y
+    vy = vy - G * dt
+    x, y, z = x + vx * dt, y + vy * dt, z + vz * dt
+    if oz * z <= 0 and oz ~= z and y - R < NET_TOP and math.abs(x) < HALF_W + 0.15 then return false end   -- the net
+    if y - R <= TABLE_Y and vy < 0 and oy - R >= TABLE_Y - 0.02 and math.abs(x) <= HALF_W and math.abs(z) <= HALF_L then
+      if z * own > 0 then
+        if first then return false end                   -- twice on its own side
+        first = true
+      else
+        return first                                     -- on the other side: good only after its own side
+      end
+      y, vy, vx, vz = TABLE_Y + R, -vy * BOUNCE, vx * 0.97, vz * 0.97
+    end
+    if y < 0 then return false end
+  end
+  return false
+end
+
+-- A serve: the ball must bounce once on the server's side, then once on the other. Tries landing spots on the
+-- server's side and flight times, ranks them by how near the second bounce lands to depth metres past the net,
+-- toward tx, and keeps the best one that really works when played through the ball's own physics (serve_ok).
 local function serve_shot(px, py, pz, tx, depth)
   local own = pz > 0 and 1 or -1
-  local best, best_err
+  local found = {}
   for land = 0.35, 1.06, 0.07 do
     for T = 0.3, 0.9, 0.04 do
-      local lx = lib.lerp(px, tx, 0.4)
+      local lx = lib.clamp(lib.lerp(px, tx, 0.4), -(HALF_W - 0.15), HALF_W - 0.15)   -- on the table, even from wide
       local vx, vy, vz = (lx - px) / T, (TABLE_Y + R - py + 0.5 * G * T * T) / T, (own * land - pz) / T
       local bvx, bvy, bvz = vx * 0.97, -(vy - G * T) * BOUNCE, vz * 0.97   -- just after the bounce on its own side
       local tn = -own * land / bvz                                          -- reaching the net
       local t2 = 2 * bvy / G                                                -- back down on the table
-      if tn > 0 and math.abs(lx) < HALF_W - 0.1 then
+      if tn > 0 then
         local over = TABLE_Y + R + bvy * tn - 0.5 * G * tn * tn
         local z2, x2 = own * land + bvz * t2, lx + bvx * t2
         if over > NET_TOP + R + 0.03 and z2 * own < -0.2 and math.abs(z2) < HALF_L - 0.1 and math.abs(x2) < HALF_W - 0.1 then
-          local err = math.abs(math.abs(z2) - depth) + math.abs(x2 - tx) * 0.5 + (over - NET_TOP) * 0.5   -- low over the net
-          if not best_err or err < best_err then best, best_err = { vx, vy, vz }, err end
+          found[#found + 1] = { vx, vy, vz, err = math.abs(math.abs(z2) - depth) + math.abs(x2 - tx) * 0.5 + (over - NET_TOP) * 0.5 }
         end
       end
     end
   end
-  return best
+  table.sort(found, function(a, b) return a.err < b.err end)
+  for i = 1, math.min(#found, 8) do
+    local f = found[i]
+    if serve_ok(px, py, pz, f[1], f[2], f[3]) then return f end
+  end
+  return nil
 end
 
 local function hit(by, vx, vy, vz, serving)
@@ -770,7 +875,7 @@ end
 -- Your shot, aimed by the line you drew: it goes the way the line went across, longer lines go deeper and faster.
 local function player_hit(serving)
   local line = you.aim or { right = 0, up = 0, length = 200 }
-  local power = lib.clamp(line.length / 380, 0.25, 1)
+  local power = serving and you.serve_power or lib.clamp(line.length / 380, 0.25, 1)   -- a serve: the meter's charge
   local tx = lib.clamp(line.right * 0.65, -(HALF_W - 0.1), HALF_W - 0.1)
   local tz = -(0.45 + 0.8 * power)
   local served = serving and serve_shot(ball.x, ball.y, ball.z, tx, 0.5 + 0.6 * power)
@@ -828,7 +933,11 @@ end
 local function start_serve()
   server, state, timer, last = serve_turn(), "serve", 1.0, nil
   ball.vx, ball.vy, ball.vz = 0, 0, 0
+  ball.call, ball.kick = nil, nil                       -- a sky or wide ball's call ends with its point
   you.armed, robot.armed, you.pending = false, false, nil
+  for _, m in ipairs({ you, robot }) do                 -- back to their spots behind the table to serve or receive
+    m.body.tx, m.body.tz, m.body.goal = lib.clamp(m.body.x, -0.6, 0.6), m.sign * (HALF_L + 0.6), nil
+  end
   plans = {}
   trail = {}
 end
@@ -931,26 +1040,16 @@ end
 local MOVE_SCALE = 0.006             -- metres the body moves for each unit the finger moves
 local drags, lines, drawn = {}, {}, {}   -- fingers walking, lines being drawn, finished lines fading out
 
--- Your serve swing: right now, timed by you. The stroke the line picks meets the ball where it will be
--- SWING_LEAD seconds from now; too early or too late and the ball is too high or too low for the bat.
-local function swing_now(line)
-  local t = SWING_LEAD
-  local point = { x = ball.x + ball.vx * t, y = ball.y + ball.vy * t - 0.5 * G * t * t, z = ball.z + ball.vz * t, t = t }
-  you.aim = line
-  return choose_and_swing(you, { point }, function(move, p, fit, run)
-    local likeness = move.swing[1] * line.right + move.swing[2] * line.up
-    return (1 - likeness) * 2.5 + run * 0.8
-  end)
-end
-
 local function swing_from(line)
   if state == "serve" and server == "player" then
     -- Your serve, first line: the toss. The ball pops up off your bat.
     state, last, bounces = "toss", nil, { player = 0, cpu = 0 }
-    ball.vx, ball.vy, ball.vz = 0, TOSS, 0
-    you.armed = false
-  elseif state == "toss" and server == "player" and not you.armed then
-    swing_now(line)                           -- second line: the swing, when you choose
+    ball.vx, ball.vy, ball.vz = 0, SERVE_TOSS, 0
+    you.armed, you.toss_y = false, ball.y
+  elseif state == "toss" and server == "player" and not you.armed and not plans[you] then
+    -- Second line: the swing, planned onto the falling ball like any return; the charge now sets its power.
+    you.aim, you.serve_power = line, math.max(0.25, serve_charge())
+    start_plan(you, function() return plan_line(you, line, true) end)
   elseif state == "rally" then
     you.aim = line
     if last == "cpu" then
@@ -1215,12 +1314,14 @@ function draw()
 
   local center = nil
   if state == "serve" and server == "player" then center = "DRAW A LINE TO TOSS" end
-  if state == "toss" and server == "player" and not you.armed then center = "DRAW AGAIN TO HIT IT" end
+  if state == "toss" and server == "player" and not you.armed then center = "DRAW AGAIN TO SERVE" end
   if state == "over" then center = message .. "   TAP TO PLAY AGAIN" end
   if center then center = words(center) text(center, (w - text_width(center, 26)) / 2, h * 0.2, 26, 1, 1, 1) end
   if state ~= "over" and sys.real_time() - message_time < 1.6 then
     text(words(message), (w - text_width(words(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
+  draw_meter(blob_tex, w, h, right, sys.real_time(), math.min(0.1, sys.real_time() - (meter.at or sys.real_time())))
+  meter.at = sys.real_time()
   local walk_hint, swing_hint = words("DRAG HERE TO MOVE"), words("DRAW HERE TO SWING")
   text(walk_hint, w * 0.25 - text_width(walk_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)
   text(swing_hint, w * 0.75 - text_width(swing_hint, 16) / 2, h - bottom - 50, 16, 0.55, 0.55, 0.7)

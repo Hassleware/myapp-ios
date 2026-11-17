@@ -797,7 +797,13 @@ void frame() {
         refresh_games();
     }
 
-    if (!current.empty() && fatal.empty()) script::update(dt);
+    // PC checks: GAMELAB_TURBO=n plays n whole 1/60 s steps (physics and animation alike) for every frame drawn, so
+    // a long self-test runs many times faster and plays exactly as it would at 60 frames a second.
+    static const int turbo = SDL_getenv("GAMELAB_TURBO") ? SDL_max(1, SDL_atoi(SDL_getenv("GAMELAB_TURBO"))) : 0;
+    if (!current.empty() && fatal.empty()) {
+        if (turbo) for (int i = 0; i < turbo; i++) script::update(1.0f / 60.0f);
+        else script::update(dt);
+    }
 
     if (!gfx::begin_frame()) {
         input::end_frame();
