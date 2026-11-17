@@ -101,6 +101,7 @@ local serve_ball, serve_bounced = false, false   -- the ball in play is a serve,
 -- touches the bat. Feet stay planted and step when the body moves away from them; the animation's own steps stay.
 local dummy = model.load("mannequin.glb")
 local bat_model = model.load("bat.glb")
+local FOLLOW_THROUGH = 0.5            -- seconds of a shot played after its hit, then back to the ready pose
 local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
 -- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
@@ -489,6 +490,7 @@ end
 -- when) or a dash (and which way). Worked out like your own swing would be, without making it.
 local hint = nil
 local CUE_REACT, SWING_CUE = 0.35, 0.4   -- seconds: a beat to react before a dash; draw the swing this long before contact
+local CUE_GAP = 0.6                      -- seconds between the swing cue and a jump cue
 local PLAN_RETRY = 0.08                  -- seconds between tries of a swing line that can't meet the ball yet
 local function start_hint()
   hint = nil
@@ -503,7 +505,11 @@ local function start_hint()
     hint.moves = {}
     if r.dash then hint.moves[#hint.moves + 1] = { at = now + CUE_REACT, kind = "dash" } end
     if r.how == "jump" and r.delay then hint.moves[#hint.moves + 1] = { at = now + r.delay, kind = "jump" } end
-    hint.moves[#hint.moves + 1] = { at = math.max(now + CUE_REACT, now + r.contact - SWING_CUE), kind = "swing" }
+    -- The swing line can be drawn early (it waits, and is planned again when you jump), so with a jump it comes
+    -- first, CUE_GAP before it, and the two cues never land together.
+    local swing_at = now + r.contact - SWING_CUE
+    if r.how == "jump" and r.delay then swing_at = math.min(swing_at, now + r.delay - CUE_GAP) end
+    hint.moves[#hint.moves + 1] = { at = math.max(now + CUE_REACT, swing_at), kind = "swing" }
     table.sort(hint.moves, function(a, b) return a.at < b.at end)
   end)
 end
@@ -576,6 +582,14 @@ local function pose(m, dt)
   m.anim:update(dt)
   if m.body.move.mirrored then mirror_pose(m.anim.animator) end
   blend_pose(m, dt)
+  -- A shot ends FOLLOW_THROUGH after its hit, blending back to the ready pose: the recordings carry on past the
+  -- hit, and one (shots-2-4-fh-drive) swings a needless second time at 2.9 s.
+  local top = m.anim.layers[#m.anim.layers]
+  if top and top.speed > 0 and top.time > CONTACT + FOLLOW_THROUGH then
+    keep_pose(m)
+    m.body.move = moves[1]
+    m.anim:play(moves[1].clip, { loop = false, restart = true, speed = 0, time = 0.3, fade = 0 })
+  end
   local b = m.body
   b.base = toward(b.base, facing(m, b.move), 1 - math.exp(-12 * dt))
   -- The flutter: on the way down from a charted jump the torso rolls quickly from side to side, like a falling
