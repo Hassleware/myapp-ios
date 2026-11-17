@@ -130,6 +130,12 @@ local CHART = {
   10, 9.875, 9.75, 9.75, 10, 10.25, 10.5, 11, 11.5, 12, 12.5, 13, 13.5, 13.75, 14, 14, 14.5, 15,
 }
 local CHART_STAND, CHART_UNIT, CHART_FPS = 15, 0.05, 60
+-- The recovery starts on the first frame back on the ground after take-off (56). From there it only plays while
+-- nothing else is asked for: a walk or another jump cuts it short.
+local CHART_LAND
+for i = 2, #CHART do
+  if not CHART_LAND and CHART[i - 1] > CHART_STAND and CHART[i] <= CHART_STAND then CHART_LAND = i end
+end
 local FALL_ROLL = math.rad(82)       -- a big dive ends lying this far over
 local FLICK_SPEED = 900              -- screen units a second: a finger let go this fast is a jump, slower is a walk
 local JUMP_REACH, DIVE_REACH = 2.2, 4.0   -- metres a second across the floor for a jump and for a dive
@@ -605,15 +611,17 @@ local function walk(m, dt)
   if b.chart then                                     -- the charted jump: the height is read, not simulated
     local f = math.floor(b.chart * CHART_FPS + 0.5) + 1      -- this step's frame (fixed steps are 1/60 s)
     b.chart = b.chart + dt
-    if f > #CHART then
-      b.chart, b.y, b.air = nil, 0, 0
+    local walking = f >= CHART_LAND and (b.tx ~= b.x or b.tz ~= b.z)   -- asked to move during the recovery
+    if f > #CHART or walking then
+      b.chart, b.air = nil, 0                         -- the crouch eases out as it walks (b.y heads for b.ty)
+      if not walking then b.y = 0 end
     else
       local off = (CHART[f] - CHART_STAND) * CHART_UNIT
       b.tx, b.tz, b.jx, b.jz, b.vx, b.vz = b.x, b.z, 0, 0, 0, 0   -- straight up and down
       if off > 0 then b.air, b.y = off, 0 else b.air, b.y = 0, off end
     end
-    return
   end
+  if b.chart then return end
   if b.squat > 0 then                                 -- the crouch before take-off
     b.squat = b.squat - dt
     b.y = -0.08
@@ -924,8 +932,9 @@ end
 -- The charted jump: straight up, following CHART frame by frame.
 local function chart_jump()
   local b = you.body
-  if b.phase or b.chart or b.air > 0 or b.squat > 0 then return end
-  b.chart, b.lean, b.down_for = 0, 0, 0
+  local recovering = b.chart and math.floor(b.chart * CHART_FPS + 0.5) + 1 >= CHART_LAND
+  if b.phase or (b.chart and not recovering) or b.air > 0 or b.squat > 0 then return end
+  b.chart, b.lean, b.down_for = 0, 0, 0                     -- in the recovery: jump again straight away
 end
 
 local function swing_from(line)
