@@ -209,8 +209,11 @@ local function flutter_roll(m, dt)
   local b = m.body
   local f = b.jump_t and math.floor(b.jump_t * jump_chart.fps + 0.5) + 1
   b.flutter = f and f > jump_chart.peak and f < jump_chart.land
-  if b.flutter and not m.swing_planned then                    -- not mid-swing: the roll would carry the bat off the ball b.roll = math.sin((f - chart.peak) / chart.fps * FLUTTER_HZ * 2 * math.pi) * FLUTTER_ROLL
-  else b.roll = lib.approach(b.roll, 0, 5, dt) end
+  if b.flutter and not m.swing_planned then        -- not mid-swing: the roll would carry the bat off the ball
+    b.roll = math.sin((f - jump_chart.peak) / jump_chart.fps * LEAN.flutter_hz * 2 * math.pi) * LEAN.flutter_roll
+  else
+    b.roll = lib.approach(b.roll, 0, 5, dt)
+  end
   b.jet.flare = math.max(0, b.jet.flare - dt)
   local ahead = rot(b.base, v(0, 0, 1))
   local half = b.roll / 2
