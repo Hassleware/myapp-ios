@@ -44,7 +44,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 # ---- the app ----
-set(ENGINE_SOURCES engine/main.cpp engine/game_list.cpp engine/phone_frame.cpp engine/gfx.cpp engine/input.cpp engine/script.cpp
+set(ENGINE_SOURCES engine/main.cpp engine/game_list.cpp engine/phone_frame.cpp engine/gfx.cpp engine/gfx_vulkan.cpp engine/gfx_text.cpp engine/input.cpp engine/script.cpp
     engine/lua_gfx.cpp engine/lua_model.cpp engine/lua_phys.cpp engine/lua_audio.cpp engine/lua_input.cpp
     engine/lua_net.cpp engine/lua_mocap.cpp engine/lua_save.cpp engine/lua_sys.cpp
     engine/model.cpp engine/phys.cpp engine/audio.cpp engine/net.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)

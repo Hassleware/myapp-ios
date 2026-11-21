@@ -1,6 +1,6 @@
 # Renderer
 
-`engine/gfx.cpp` is the renderer and the largest file in the engine. It is the only code that talks to Vulkan. On the iPhone, MoltenVK translates those Vulkan calls to Apple's Metal. Read this page before opening the file.
+The renderer is `engine/gfx.cpp` (drawing), `engine/gfx_vulkan.cpp` (Vulkan set-up) and `engine/gfx_text.cpp` (text), sharing `engine/gfx_internal.h`. It is the only code that talks to Vulkan. On the iPhone, MoltenVK translates those Vulkan calls to Apple's Metal. Read this page before opening the file.
 
 What it offers is listed in `gfx.h` on the [C++ headers](../reference/headers.md) page. What games see of it is under `gfx` in the [Lua API](../reference/lua-api.md).
 
@@ -10,7 +10,7 @@ What it offers is listed in `gfx.h` on the [C++ headers](../reference/headers.md
 
 When a game calls `gfx.cube(...)` inside `draw()`, nothing is drawn. The renderer writes down *what* to draw: which mesh, which pipeline, which textures, and its matrix and colour.
 
-::: source engine/gfx.cpp Draw
+::: source engine/gfx_internal.h Draw
 
 At the end of the frame, `end_frame` replays everything in the right order. This is what makes it possible to:
 
@@ -39,11 +39,11 @@ To stay small, the renderer has exactly one of several things that bigger engine
 
 **One block of per-frame data**, filled once per pass:
 
-::: source engine/gfx.cpp FrameData
+::: source engine/gfx_internal.h FrameData
 
 **One block of per-draw data**, 128 bytes, sent as push constants:
 
-::: source engine/gfx.cpp PushData
+::: source engine/gfx_internal.h PushData
 
 !!! danger "These two structs must match the shaders"
     `FrameData` and `PushData` are the C++ view of `Frame` and `Push` in `engine/shaders/common.slang`. The graphics chip reads the same bytes both describe. Change one side and you must change the other in the same commit, recompile every shader, and ship. Compare them on the [Shader interface](../reference/shader-interface.md) page.

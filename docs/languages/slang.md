@@ -76,7 +76,7 @@ Every shader starts with `#include "common.slang"`. That file is the contract be
 The full file, with the lighting functions, is on the [Shader interface](../reference/shader-interface.md) page.
 
 !!! danger "Never change these structs in a game's shader"
-    The C++ side fills this memory in exactly this layout (`FrameData` and `PushData` in `engine/gfx.cpp`). If the two disagree, everything draws wrong. Changing them is an engine change: both sides together, then `ship`.
+    The C++ side fills this memory in exactly this layout (`FrameData` and `PushData` in `engine/gfx_internal.h`). If the two disagree, everything draws wrong. Changing them is an engine change: both sides together, then `ship`.
 
 ## Sending your own numbers to a shader
 

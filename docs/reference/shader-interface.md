@@ -26,7 +26,7 @@ The shader's view:
 
 The engine's view:
 
-::: source engine/gfx.cpp FrameData
+::: source engine/gfx_internal.h FrameData
 
 ### Per draw
 
@@ -36,7 +36,7 @@ The shader's view:
 
 The engine's view:
 
-::: source engine/gfx.cpp PushData
+::: source engine/gfx_internal.h PushData
 
 !!! danger "Changing either pair"
     Change both sides in the same commit, recompile every shader (`python tools/dev.py shaders`), and `ship`. Game shaders already on a phone were compiled against the old layout and will draw wrongly until they are recompiled and synced.

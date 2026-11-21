@@ -10,7 +10,10 @@ The engine is a small C++ program built on three libraries: **SDL3** for the win
 | `engine/game_list.cpp` | `app` | The game list: its background and a button per game |
 | `engine/phone_frame.cpp` | `app` | The safe area; on the PC the iPhone frames (F1, F2) and the layout check |
 | `engine/app.h` | `app` | What those three files share |
-| `engine/gfx.cpp` | `gfx` | All drawing. The only file that talks to Vulkan |
+| `engine/gfx.cpp` | `gfx` | All drawing: textures, meshes, materials, the frame's record and replay |
+| `engine/gfx_vulkan.cpp` | `gfx` | The renderer's Vulkan set-up: device, swapchain, render passes, pipelines |
+| `engine/gfx_text.cpp` | `gfx` | Fonts, the glyph atlas, text |
+| `engine/gfx_internal.h` | `gfx::internal` | The renderer's types and state, shared by those three |
 | `engine/model.cpp` | `model` | Loading `.glb` files, skeletons, animation |
 | `engine/phys.cpp` | `phys` | Collision shapes and the questions asked about them |
 | `engine/audio.cpp` | `audio` | Mixing sound |
@@ -45,7 +48,7 @@ Each has a page in this section. The headers, which are the fastest way to see w
 Two rules keep this simple:
 
 - **Subsystems do not call upward.** `gfx` knows nothing about Lua. `script` is the only file that includes Lua's headers.
-- **Only `gfx.cpp` touches Vulkan, and only `devsync.cpp` touches the dev server.** If you find yourself needing a Vulkan type elsewhere, add a function to `gfx.h` instead.
+- **Only the renderer (`gfx*.cpp`) touches Vulkan, and only `devsync.cpp` touches the dev server.** If you find yourself needing a Vulkan type elsewhere, add a function to `gfx.h` instead.
 
 ## The principle: games ask by name
 
