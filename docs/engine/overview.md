@@ -6,7 +6,10 @@ The engine is a small C++ program built on three libraries: **SDL3** for the win
 
 | File | Namespace | Responsible for |
 |---|---|---|
-| `engine/main.cpp` | (none) | The app itself: start-up, the frame loop, the game list, hot reload, the log file, the PC-only phone frames |
+| `engine/main.cpp` | `app` | The app itself: start-up, the frame loop, starting and stopping games, hot reload, the log file, the HUD |
+| `engine/game_list.cpp` | `app` | The game list: its background and a button per game |
+| `engine/phone_frame.cpp` | `app` | The safe area; on the PC the iPhone frames (F1, F2) and the layout check |
+| `engine/app.h` | `app` | What those three files share |
 | `engine/gfx.cpp` | `gfx` | All drawing. The only file that talks to Vulkan |
 | `engine/model.cpp` | `model` | Loading `.glb` files, skeletons, animation |
 | `engine/phys.cpp` | `phys` | Collision shapes and the questions asked about them |

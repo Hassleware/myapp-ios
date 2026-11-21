@@ -59,7 +59,7 @@ This plays the game inside twelve iPhone shapes, from the iPhone 11 to the 17 Pr
 
 How it works: the engine logs the box of everything drawn in 2D, and compares those boxes against the hidden regions of each phone.
 
-::: source engine/main.cpp layout_check_frame
+::: source engine/phone_frame.cpp layout_check_frame
 
 Its limits, so you know what a pass means:
 
