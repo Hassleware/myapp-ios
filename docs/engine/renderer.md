@@ -102,4 +102,4 @@ To capture a frame without a person at the keyboard, configure the build with `-
     The shadow pass replays the opaque list. See-through things would need their own handling; today they cast none.
 
 ??? example "3. Where would you add a fifth texture slot?"
-    You would have to change the material's descriptor set layout in `gfx.cpp`, add `tex4` to `common.slang`, extend `gfx.texture` in `script.cpp`, recompile all shaders and ship. That is why there are four.
+    You would have to change the material's descriptor set layout in `gfx.cpp`, add `tex4` to `common.slang`, extend `gfx.texture` in `lua_gfx.cpp`, recompile all shaders and ship. That is why there are four.

@@ -89,7 +89,7 @@ Here is the part of the hook that does the finding for C-like languages:
 
 1. **This handbook** builds the [Lua API](../reference/lua-api.md) page from it.
 2. **VS Code** uses it for autocomplete and hover text, through the Lua extension.
-3. **The check** compares it with what `engine/script.cpp` actually registers.
+3. **The check** compares it with what `engine/script.cpp` and the `engine/lua_*.cpp` files actually register.
 
 An entry looks like this:
 
@@ -108,7 +108,7 @@ The check reads the C++ directly:
 If you add a function to the engine and forget to describe it, building the handbook prints
 
 ```
-WARNING - Lua API: input.haptic is registered in engine/script.cpp but not described in docs/api/gamelab.lua
+WARNING - Lua API: input.haptic is registered in engine/script.cpp and engine/lua_*.cpp but not described in docs/api/gamelab.lua
 ```
 
 and the top of the Lua API page turns red and lists it. To make that a hard failure, for example before merging:

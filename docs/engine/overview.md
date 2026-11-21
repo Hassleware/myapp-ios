@@ -13,7 +13,8 @@ The engine is a small C++ program built on three libraries: **SDL3** for the win
 | `engine/audio.cpp` | `audio` | Mixing sound |
 | `engine/input.cpp` | `input` | Touch, sticks and buttons, sensors, game pads, the keyboard |
 | `engine/net.cpp` | `net` | HTTPS requests, calls to the game's own backend, and every safety rule on them |
-| `engine/script.cpp` | `script` | Running a game's Lua and giving it the API |
+| `engine/script.cpp` | `script` | Running a game's Lua: loading, callbacks, errors, hot reload |
+| `engine/lua_<table>.cpp` | `script::api` | One file per Lua table (`lua_gfx.cpp`, `lua_phys.cpp`...): the functions games call |
 | `engine/devsync.cpp` | `devsync` | Loader only: fetching changed game files from the PC |
 | `engine/handles.h` | | The handle pool every subsystem uses |
 | `engine/shaders/` | | `common.slang` and the engine's two shaders |

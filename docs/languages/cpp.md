@@ -83,9 +83,9 @@ Matrices are sixteen floats in column-major order, the same as GLSL and Vulkan e
 
 ## How Lua calls C++
 
-Every function a game can call is a small C++ function in `engine/script.cpp` that reads its arguments from Lua's stack, calls the engine, and pushes results back.
+Every function a game can call is a small C++ function in `engine/lua_<table>.cpp` that reads its arguments from Lua's stack, calls the engine, and pushes results back.
 
-::: source engine/script.cpp l_sphere l_project
+::: source engine/lua_gfx.cpp l_sphere l_project
 
 The pattern:
 
@@ -106,7 +106,7 @@ Note what it guards against: a game that never defined the function, and a game 
 ## Reading the code: a suggested order
 
 1. `engine/main.cpp`: the function `frame`. Everything that happens each frame starts there. See [A frame, start to finish](../engine/lifecycle.md).
-2. `engine/script.cpp`: skim the `l_` functions for an area you care about.
+2. `engine/lua_<table>.cpp`: skim the `l_` functions for an area you care about.
 3. The header of that area: `gfx.h`, `phys.h`, `audio.h`. All are on the [C++ headers](../reference/headers.md) page.
 4. Only then the `.cpp` behind it.
 

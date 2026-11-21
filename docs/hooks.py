@@ -23,7 +23,12 @@ log = logging.getLogger("mkdocs.hooks.gamelab")
 REPO = Path(__file__).resolve().parent.parent
 GITHUB = "https://github.com/Hassleware/myapp-ios/blob/main/"
 API_FILE = "docs/api/gamelab.lua"
-SCRIPT = "engine/script.cpp"
+SCRIPT = "engine/script.cpp and engine/lua_*.cpp"   # how pages name the Lua host
+
+
+def script_files():
+    """The Lua host and its binding files (one lua_<table>.cpp per Lua table), host first."""
+    return ["engine/script.cpp"] + sorted(p.relative_to(REPO).as_posix() for p in (REPO / "engine").glob("lua_*.cpp"))
 HIGHLIGHT = {".cpp": "cpp", ".h": "cpp", ".c": "cpp", ".mm": "objc", ".py": "python", ".lua": "lua", ".slang": "hlsl",
              ".txt": "cmake", ".yml": "yaml", ".cfg": "ini", ".in": "xml", ".json": "json"}
 COMMENT = {".py": "#", ".lua": "--", ".txt": "#", ".yml": "#", ".cfg": "#"}
@@ -202,7 +207,7 @@ def read_api():
 
 def read_registered():
     """What engine/script.cpp really gives to games: {(table, name): C++ function}."""
-    text = "\n".join(lines_of(SCRIPT))
+    text = "\n".join("\n".join(lines_of(f)) for f in script_files())
     arrays = {name: re.findall(r'\{"(\w+)",\s*(\w+)\}', body)
               for name, body in re.findall(r"const luaL_Reg (\w+)\[\] = \{(.*?)\};", text, re.S)}
     registered = {}
@@ -228,7 +233,7 @@ def api_drift():
 def render_lua_api(arguments):
     table = arguments[0]
     registered = read_registered()
-    script_lines = lines_of(SCRIPT)
+    script_lines = [(f, n, line) for f in script_files() for n, line in enumerate(lines_of(f), 1)]
     out, group = [], None
     for entry in read_api():
         if entry["table"] != table:
@@ -242,9 +247,9 @@ def render_lua_api(arguments):
         out.append(entry["description"] + "\n")
         function = registered.get((table, entry["name"]))
         if function:
-            for number, line in enumerate(script_lines, 1):
+            for path, number, line in script_lines:
                 if re.match(r"int " + function + r"\(lua_State", line):
-                    out.append(f"<small>C++: [`{function}` in {SCRIPT}, line {number}]({GITHUB}{SCRIPT}#L{number})</small>\n")
+                    out.append(f"<small>C++: [`{function}` in {path}, line {number}]({GITHUB}{path}#L{number})</small>\n")
                     break
     if not out:
         raise PluginError(f"docs: '::: lua-api {table}' matched nothing in {API_FILE}")

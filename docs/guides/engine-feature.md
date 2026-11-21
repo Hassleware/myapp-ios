@@ -31,17 +31,17 @@ If the feature is a new subsystem, make a new pair of files and add the `.cpp` t
 
 ### 2. Give it to Lua
 
-In `engine/script.cpp`, write a function named `l_<name>` that reads its arguments from Lua and calls yours:
+In the `engine/lua_<table>.cpp` file of its Lua table (here `engine/lua_input.cpp`), write a function named `l_<name>` that reads its arguments from Lua and calls yours:
 
-::: source engine/script.cpp l_haptic
+::: source engine/lua_input.cpp l_haptic
 
-Then add it to the right table, in `script::load`. This one is in `inputFunctions`:
+Then add it to that file's list, in its `register_<table>` function. This one is in `inputFunctions`, in `register_input`:
 
 ```cpp
 const luaL_Reg inputFunctions[] = { ..., {"haptic", l_haptic}, ... };
 ```
 
-The helpers that keep these functions short:
+The helpers that keep these functions short (declared in `engine/lua_api.h`):
 
 | Helper | Reads |
 |---|---|
@@ -114,6 +114,6 @@ The Lua function is the part people live with. Some conventions that keep the AP
 
 `net.request` is the largest recent addition and touches every layer: a new subsystem (`net.h`, `net.cpp`), a platform file (`ios/http.mm`), a Lua function with a callback (`l_net_request`), a setting in `game.cfg`, and delivery of answers in `script::update`.
 
-::: source engine/script.cpp l_net_request
+::: source engine/lua_net.cpp l_net_request
 
 Notice how it keeps the game's function: `luaL_ref` stores it in Lua's registry and gives back a number, which is kept against the request's id until the answer arrives. The whole flow is drawn on the [Web calls](../engine/networking.md#how-a-request-travels) page.

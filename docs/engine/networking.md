@@ -81,7 +81,7 @@ It prints `net self-check passed`. **If you change anything in `net.cpp`, run th
  Lua: net.request(...)                      main thread
         │
         ▼
- script.cpp  l_net_request ── stores your function, keyed by request id
+ lua_net.cpp l_net_request ── stores your function, keyed by request id
         │
         ▼
  net.cpp  send ── checks the rules ── refused? answer queued with the reason

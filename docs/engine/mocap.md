@@ -40,7 +40,7 @@ The model weights came from a Hugging Face mirror because GVHMR's Google Drive w
 | Part | Where | Changes need |
 |---|---|---|
 | Body tracking and recording | `ios/mocap.mm` (ARKit) | An app build |
-| The Lua functions | `mocap.*` in `engine/script.cpp`, declared in `engine/mocap.h` | An app build |
+| The Lua functions | `mocap.*` in `engine/lua_mocap.cpp`, declared in `engine/mocap.h` | An app build |
 | The recording screen | `games/mocap/main.lua` | Nothing: it syncs |
 | Turning a take into `.bvh` | `backends/mocap/server.py`, run by `dev.py` | Nothing: save and the next take uses it |
 
