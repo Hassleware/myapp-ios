@@ -1,9 +1,9 @@
 """A wooden artist's mannequin (egg head, wooden segments, ball joints, screw heads) on a 22-bone humanoid rig,
 and the retargeting that puts a mocap take onto it.
 
-    blender --background --python tools/blender_mannequin.py -- captures/take-1-sam3d.npz games/mannequin/mannequin.glb
+    blender --background --python tools/dream-table/blender_mannequin.py -- captures/take-1-sam3d.npz games/mannequin/mannequin.glb
         builds the mannequin, retargets the take onto it and exports a .glb with the animation (named after the take)
-    blender --background --python tools/blender_mannequin.py -- - games/mannequin/mannequin.glb
+    blender --background --python tools/dream-table/blender_mannequin.py -- - games/mannequin/mannequin.glb
         just the mannequin, standing in its T-pose
 
 In Blender's Scripting tab, Run Script builds the mannequin and retargets the newest take in captures/.
@@ -393,8 +393,8 @@ def retarget(armature, npz_path, name=None):
 
 def find_repo():
     here = next((Path(bpy.path.abspath(t.filepath)) for t in bpy.data.texts if t.filepath.endswith("blender_mannequin.py")),
-                Path(globals().get("__file__", "tools/blender_mannequin.py")))
-    return here.resolve().parent.parent
+                Path(globals().get("__file__", "tools/dream-table/blender_mannequin.py")))
+    return here.resolve().parents[2]
 
 
 if __name__ == "__main__":
@@ -404,7 +404,7 @@ if __name__ == "__main__":
     #   3. the one this script builds.
     # Remodel freely, but keep the armature named 'mannequin', its bone names, the T-pose, and every part
     # weighted to the bone that moves it. Bones may be moved and resized: retargeting reads them from the file.
-    #   blender --background --python tools/blender_mannequin.py -- --save-model    writes the built one to (2)
+    #   blender --background --python tools/dream-table/blender_mannequin.py -- --save-model    writes the built one to (2)
     args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     repo = find_repo()
     model = repo / "assets" / "mannequin" / "mannequin.blend"

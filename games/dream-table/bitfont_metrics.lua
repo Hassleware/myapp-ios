@@ -1,4 +1,4 @@
--- Made by tools/make_bitmap_font.py from MyDotFont.ttf at 30 px. Do not edit by hand.
+-- Made by tools/dream-table/make_bitmap_font.py from MyDotFont.ttf at 30 px. Do not edit by hand.
 -- Per character code: page, x, y, w, h in the page; ox, oy from the line's top-left; advance.
 return { line = 30, space = 9.00, pages = 2, glyphs = {
   [33] = { 1, 112, 103, 15, 29, 0, 5, 9.59 },

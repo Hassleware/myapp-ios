@@ -1,7 +1,7 @@
 """Puts a .glb on a PS1 diet: fewer triangles, small textures, no normal maps. Skins, bone weights, node names
 and animations are kept.
 
-    blender -b -P tools/blender_ps1_diet.py -- in.glb out.glb <triangles> <texture size>
+    blender -b -P tools/dream-table/blender_ps1_diet.py -- in.glb out.glb <triangles> <texture size>
 
 Each mesh is decimated (edge collapse) so the whole file has about <triangles>; every image is scaled down to
 at most <texture size> on its longer side; normal maps are unplugged. Runs headless (no window).

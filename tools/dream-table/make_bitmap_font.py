@@ -2,7 +2,7 @@
 letter is drawn once, here, and the game draws it as one textured square (two triangles) instead of outlining
 it at run time.
 
-    python tools/make_bitmap_font.py <font.ttf> <out folder> [pixel size]
+    python tools/dream-table/make_bitmap_font.py <font.ttf> <out folder> [pixel size]
 
 Writes <out>/font_1.png, font_2.png, ... (256 x 256 each) and <out>/bitfont_metrics.lua: the line height and, per character,
 its page, place in the page, offset from the line's top-left and advance (all in pixels). Letters are white
@@ -61,7 +61,7 @@ os.makedirs(out, exist_ok=True)
 for i, p in enumerate(pages, 1):
     p.save(os.path.join(out, f"font_{i}.png"))
 with open(os.path.join(out, "bitfont_metrics.lua"), "w", encoding="utf-8") as f:
-    f.write("-- Made by tools/make_bitmap_font.py from %s at %d px. Do not edit by hand.\n" % (os.path.basename(src), SIZE))
+    f.write("-- Made by tools/dream-table/make_bitmap_font.py from %s at %d px. Do not edit by hand.\n" % (os.path.basename(src), SIZE))
     f.write("-- Per character code: page, x, y, w, h in the page; ox, oy from the line's top-left; advance.\n")
     f.write("return { line = %d, space = %.2f, pages = %d, glyphs = {\n" % (line, font.getlength(" "), len(pages)))
     for ch in sorted(glyphs):

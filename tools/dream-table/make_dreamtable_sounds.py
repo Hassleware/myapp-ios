@@ -1,6 +1,6 @@
 """Makes Dream Table's hit sounds (no recordings needed): a crisp bat "tok" and a softer table "tick".
 
-    python tools/make_dreamtable_sounds.py
+    python tools/dream-table/make_dreamtable_sounds.py
 
 Writes games/dream-table/hit_bat.wav and bounce.wav: 22050 Hz, mono, 16-bit, a few kilobytes each.
 """
@@ -11,7 +11,7 @@ import struct
 import wave
 
 RATE = 22050
-OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "games", "dream-table")
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "games", "dream-table")
 
 
 def write(name, samples):

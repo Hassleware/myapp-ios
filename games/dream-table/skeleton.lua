@@ -13,15 +13,15 @@ local qinv, qmul, rot, sub, toward, v = game.qinv, game.qmul, game.rot, game.sub
 local yaw_turn = game.yaw_turn
 
 -- ---------------------------------------------------------------- the mannequins
--- Both play the swings you recorded with the mocap game: mannequin.glb (tools/blender_mannequin.py) holds one clip per
+-- Both play the swings you recorded with the mocap game: mannequin.glb (tools/dream-table/blender_mannequin.py) holds one clip per
 -- recorded swing, each with its hit CONTACT seconds in. Every clip also plays mirror-imaged with the bat in the other
 -- hand, so 11 recordings give 22 moves. A swing is planned onto the ball's flight (plan_swing): which move, where to
 -- be for its bat to meet the ball, and when to start the clip so the recorded hit lands as the ball gets there.
 -- The ball is only hit if it really touches the bat (REACH).
 local mannequin_model = model.load("mannequin.glb")
 local bat_model = model.load("bat.glb")
-local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/split_shots.py)
--- The middle of each bat's blade, in the bat's own frame (tools/blender_bats.py: along the hand, palm side).
+local CONTACT = 2.0                  -- seconds into every shot clip that the ball is hit (tools/dream-table/split_shots.py)
+-- The middle of each bat's blade, in the bat's own frame (tools/dream-table/blender_bats.py: along the hand, palm side).
 local BLADE = { L = { 0.273, -0.003, -0.033 }, R = { -0.273, -0.003, -0.033 } }
 local BLEND_TIME = 0.18              -- switching moves: every bone blends from the old pose over this long
 local moves, hands, bones = {}, {}, {}   -- filled once by load_moves
@@ -146,7 +146,7 @@ end
 
 -- Holding the ball for a serve: the serving hand turns (by weight w, 0 to 1) so its bat lies flat, face up, still
 -- pointing the way it did, and the ball rests on top. The blade runs along the bat's x and faces along its z
--- (tools/blender_bats.py).
+-- (tools/dream-table/blender_bats.py).
 local function flat_bat(m, side, w)
   if w <= 0 then return end
   local a, hand = m.anim.animator, hands[side]

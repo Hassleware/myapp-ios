@@ -187,7 +187,7 @@ def run_job(name, hands=False):
         set_status(name, state="done", stage="done", file=f"captures/{name}-sam3d.bvh")
         print(f"  [mocap] saved captures/{name}-sam3d.bvh", flush=True)
         if name.startswith("shots"):   # one clip per beep, each with a guess at which shot it is
-            subprocess.run([sys.executable, str(Path(__file__).resolve().parents[2] / "tools" / "split_shots.py"), name])
+            subprocess.run([sys.executable, str(Path(__file__).resolve().parents[2] / "tools" / "dream-table" / "split_shots.py"), name])
     except Exception as problem:
         detail = getattr(problem, "stderr", b"") or b""
         message = str(problem) + ("\n" + detail.decode(errors="replace") if detail else "")

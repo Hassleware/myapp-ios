@@ -1,6 +1,6 @@
 """Cuts a long mocap take of many table tennis shots into one clip per shot, and guesses which shot each is.
 
-    python tools/split_shots.py shots-1
+    python tools/dream-table/split_shots.py shots-1
 
 The mocap game counts in each shot with a high beep every PERIOD seconds (the first at FIRST_HIT). One different
 shot is hit on each. The real hit is found as the bat wrist's fastest moment near each beep, and the clip runs half
@@ -38,7 +38,7 @@ def guess(across, up, start_height, peak):
 
 
 def split(name):
-    captures = Path(__file__).resolve().parent.parent / "captures"
+    captures = Path(__file__).resolve().parents[2] / "captures"
     take = np.load(captures / f"{name}-sam3d.npz")
     data = {k: take[k] for k in take.files}
     fps, p, names = float(data["fps"]), data["positions"], list(data["names"])

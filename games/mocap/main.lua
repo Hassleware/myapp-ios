@@ -6,11 +6,11 @@
 -- Shots: "three, two, one, go" starts the recording. Then for every shot, "ready", and a count-in on a steady beat:
 -- beep, beep, beep, BEEP. Hit on the high fourth BEEP (every PERIOD seconds), a different shot each time.
 -- "Stopped" when it ends. Takes are named shots-1,
--- shots-2...; the PC cuts them into one clip per shot and guesses which shot each is (tools/split_shots.py).
+-- shots-2...; the PC cuts them into one clip per shot and guesses which shot each is (tools/dream-table/split_shots.py).
 -- Hands free: raise both hands over your head and hold them there for a second to start, and again to stop.
 
 local lib = include("lib.lua")
-local FIRST_HIT, PERIOD = 4.0, 4.0   -- keep the same as tools/split_shots.py
+local FIRST_HIT, PERIOD = 4.0, 4.0   -- keep the same as tools/dream-table/split_shots.py
 local say = {}   -- spoken words, made with Windows' own voice and trimmed to start at once
 for _, word in ipairs({ "three", "two", "one", "go", "ready", "stopped", "beat", "hit" }) do say[word] = audio.load(word .. ".wav") end
 local BEAT = 0.5            -- seconds between the count-in beeps; the hit is the fourth

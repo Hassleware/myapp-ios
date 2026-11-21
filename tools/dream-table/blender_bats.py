@@ -1,6 +1,6 @@
 """A table tennis bat duct-taped to a hand: the mannequin game sticks one to each of the mannequin's hands.
 
-    blender --background --python tools/blender_bats.py -- games/mannequin/bat.glb
+    blender --background --python tools/dream-table/blender_bats.py -- games/mannequin/bat.glb
 
 It measures the mannequin's left hand (assets/mannequin/mannequin.blend if there is one, otherwise the built
 mannequin) and builds to fit it: a wooden handle laid along the palm, the blade beyond the fingertips (red rubber
@@ -27,8 +27,8 @@ TEXTURE_METRES = 0.06    # one copy of the tape texture covers this many metres
 
 def find_repo():
     here = next((Path(bpy.path.abspath(t.filepath)) for t in bpy.data.texts if t.filepath.endswith("blender_bats.py")),
-                Path(globals().get("__file__", "tools/blender_bats.py")))
-    return here.resolve().parent.parent
+                Path(globals().get("__file__", "tools/dream-table/blender_bats.py")))
+    return here.resolve().parents[2]
 
 
 def hand_size(repo):
@@ -37,8 +37,8 @@ def hand_size(repo):
     if model.exists():
         bpy.ops.wm.open_mainfile(filepath=str(model))
     else:
-        namespace = {"__name__": "builder", "__file__": str(repo / "tools" / "blender_mannequin.py")}
-        exec(compile((repo / "tools" / "blender_mannequin.py").read_text(), "blender_mannequin.py", "exec"), namespace)
+        namespace = {"__name__": "builder", "__file__": str(repo / "tools" / "dream-table" / "blender_mannequin.py")}
+        exec(compile((repo / "tools" / "dream-table" / "blender_mannequin.py").read_text(), "blender_mannequin.py", "exec"), namespace)
         namespace["build"]()
     armature = bpy.data.objects["mannequin"]
     wrist = armature.matrix_world @ armature.data.bones["hand.L"].head_local

@@ -34,8 +34,8 @@ local GRAVITY = 7.5                         -- a little floatier than real gravi
 local BOUNCE = 0.86                   -- how much height a bounce keeps
 
 local ball = { x = 0, y = 1, z = 0, vx = 0, vy = 0, vz = 0 }
-local bitfont = include("bitfont.lua")   -- your own dot font, baked with its outline (tools/make_bitmap_font.py)
--- Feel: what a hit and a bounce sound and look like (tools/make_dreamtable_sounds.py makes the sounds).
+local bitfont = include("bitfont.lua")   -- your own dot font, baked with its outline (tools/dream-table/make_bitmap_font.py)
+-- Feel: what a hit and a bounce sound and look like (tools/dream-table/make_dreamtable_sounds.py makes the sounds).
 local FEEL = {
   hit = audio.load("hit_bat.wav"), bounce = audio.load("bounce.wav"),
   stop = 0.07,          -- a hit freezes the game this long (real seconds): hit-stop

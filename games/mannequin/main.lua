@@ -1,5 +1,5 @@
 -- The wooden mannequin playing a mocap take, with gravity and grounded, rolling feet.
--- mannequin.glb is made on the PC by tools/blender_mannequin.py (your model, plus a take retargeted onto it).
+-- mannequin.glb is made on the PC by tools/dream-table/blender_mannequin.py (your model, plus a take retargeted onto it).
 -- Drag to turn the camera round. Tap to switch the IK and gravity on and off, to compare.
 --
 -- Every frame, after the animation has posed the body:
@@ -16,7 +16,7 @@
 local lib = include("lib.lua")
 
 local dummy = model.load("mannequin.glb")
-local bat = model.load("bat.glb")   -- a table tennis bat duct-taped to a hand (tools/blender_bats.py), one per hand
+local bat = model.load("bat.glb")   -- a table tennis bat duct-taped to a hand (tools/dream-table/blender_bats.py), one per hand
 local hands = {}
 local anim = lib.animation(dummy)
 local clips = model.clips(dummy)
