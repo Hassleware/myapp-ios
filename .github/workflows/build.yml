@@ -46,6 +46,10 @@ jobs:
           for i in $(seq 1 30); do curl -s localhost:8765/api/hello | grep -q gamelab && break; sleep 1; done
           ./devsync_test "$PWD" || { echo "---- dev.py said:"; cat devpy.log; exit 1; }
 
+      # How easy the code is to read (tools/cev/cev.py). Advisory: it prints findings and never fails the build.
+      - name: Measure cognitive ease (advisory)
+        run: python3 tools/cev/cev.py --mode advisory | tail -n 25
+
       - name: Download MoltenVK (runs Vulkan on the iPhone's Metal)
         run: |
           base="https://github.com/KhronosGroup/MoltenVK/releases/download/$MOLTENVK_VERSION"

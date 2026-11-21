@@ -1,0 +1,11 @@
+{
+  "mode": "advisory",
+  "paths": ["engine", "ios", "tests", "CMakeLists.txt", "games/dream-table", "tools/dev.py",
+            "tools/dream-table", "tools/blender_dreamtable_world.py", "tools/template", "tools/cev",
+            "docs/hooks.py"],
+  "skip": "(\\.spv|\\.glb|\\.png|\\.wav|\\.ttf|font8x8_basic\\.h|games/dream-table/bitfont_metrics\\.lua|__pycache__)$",
+  "max_file_lines": 800,
+  "max_function_lines": 80,
+  "max_nesting": 4,
+  "max_line_width": 120
+}

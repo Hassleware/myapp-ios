@@ -11,6 +11,7 @@
     python tools/dev.py check <game>     list any 2D drawing or touch control an iPhone's notch, island or corners would hide
     python tools/dev.py doctor       check that the tools this repo needs are installed
     python tools/dev.py docs         serve the handbook (docs/) in your browser, rebuilt as the code changes
+    python tools/dev.py cev [args]   measure how easy the code is to read (tools/cev/cev.py; --help for its options)
 
 Two kinds of change, and the tool tells you which one you made:
     live     Lua, shaders, levels and other game files. Sent to the phone over Wi-Fi as you save.
@@ -900,6 +901,8 @@ def main():
         cmd_doctor()
     elif command == "docs":
         cmd_docs()
+    elif command == "cev":
+        sys.exit(subprocess.call([sys.executable, str(REPO / "tools" / "cev" / "cev.py")] + args[1:]))
     elif command == "fingerprint":
         print(fingerprint())
     elif command == "shaders":
