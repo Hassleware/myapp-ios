@@ -1,4 +1,5 @@
--- The charted jump: the user's own frame data, and the tables worked out from it. Used by main.lua as chart.*
+-- The charted jump: the user's own frame data, and the tables worked out from it.
+-- Used as jump_chart.* by main.lua and planner.lua.
 -- The charted jump (the user's paper, 17 November 2026): a straight-up jump that follows these heights exactly,
 -- one a frame at 60 fps, from the button press (frame 1) to standing again. 15 is standing. No physics: the hips
 -- sit at (height - 15) * CHART_UNIT metres: below standing (the jump squat, frames 1-4, and the landing squash and

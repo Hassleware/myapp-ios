@@ -1,8 +1,8 @@
 -- Words in your dot font, as a bitmap font: every letter was drawn once, with a smooth outline and a soft drop
--- shadow, by tools/make_bitmap_font.py (font.lua, font_1.png, font_2.png). Each letter is one textured square,
+-- shadow, by tools/make_bitmap_font.py (bitfont_metrics.lua, font_1.png, font_2.png). Each letter is one textured square,
 -- tinted by the colour given (the outline stays dark). size is the line's height in 2D units, like gfx.text.
 
-local F = include("font.lua")
+local F = include("bitfont_metrics.lua")
 local B = {}
 local G, LINE, SPACE = F.glyphs, F.line, F.space
 local pages = {}
