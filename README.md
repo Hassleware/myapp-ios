@@ -3,10 +3,14 @@
 One repo for many games. A C++ engine (Vulkan, running on Metal through MoltenVK on the iPhone) runs games written in Lua, with shaders written in Slang.
 
 ```
-engine/     C++: renderer, input, Lua host, Wi-Fi sync for the loader
-games/      one folder per game: main.lua, shaders/, anything else it needs
-ios/        iPhone app settings
-tools/      dev.py, the one tool you run
+engine/     C++, one subsystem per file: the app and game list (main, game_list, phone_frame), the renderer
+            (gfx, gfx_vulkan, gfx_text), models, phys, audio, input, net, the Lua host (script) and one
+            lua_<table>.cpp per Lua table, Wi-Fi sync for the loader (devsync)
+games/      one folder per game: main.lua, shaders/, anything else it needs (games/dream-table/NOTES.md maps the
+            game being made)
+ios/        iPhone app settings and the iPhone-only code (haptics, http, mocap)
+tools/      dev.py, the one tool you run; dream-table/ (that game's asset tools); cev/ (code readability)
+docs/       the handbook
 ```
 
 **New here? Read the handbook:** `python tools/dev.py docs` opens it in your browser (once: `python -m pip install mkdocs-material`). It has onboarding, a tutorial for each language used here, a tour of the engine and the full reference, and it shows code straight from this repo so it cannot go stale.
@@ -22,6 +26,7 @@ python tools/dev.py status        what is out of date and what to do
 python tools/dev.py backend coin-dash   give a game its own server code (backends/coin-dash/server.py)
 python tools/dev.py docs          serve the handbook (docs/) with live rebuild
 python tools/dev.py check net-demo  play a game inside every iPhone shape and list what each phone would hide
+python tools/dev.py cev           measure how easy the code is to read (file and function sizes, nesting, widths)
 ```
 
 ## Two kinds of change

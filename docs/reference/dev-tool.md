@@ -18,7 +18,7 @@ Run as `python tools/dev.py <command>`.
 | `release <game>` | Build one game as its own standalone app |
 | `doctor` | Check that the tools this repository needs are installed |
 | `docs` | Serve this handbook |
-| `cev [options]` | Measure how easy the code is to read: file and function sizes, nesting, line widths (`tools/cev/cev.py`; `--json`, `--baseline`, `--mode advisory|warn|strict`) |
+| `cev [options]` | Measure how easy the code is to read: file and function sizes, nesting, line widths (`tools/cev/cev.py`; `--json`, `--baseline`, `--mode` advisory, warn or strict) |
 | `fingerprint` | Print the build code of the native files on disk |
 | `shaders` | Compile every shader |
 
