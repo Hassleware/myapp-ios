@@ -22,7 +22,7 @@
 -- (swings), serve_meter.lua (the serve's meter and rating), view.lua (drawing) and rally.lua (ball and rules).
 -- NOTES.md has the map, the tuning tables and how to test.
 
-local bone_local = model.bone_local or model["local"]   -- a bone's own transform (older apps only have the second)
+local bone_local = model.bone_local   -- a bone's own transform (needs an app from 21 November 2026 or later)
 local lib = include("lib.lua")
 local scenery = include("scenery.lua")
 budget = include("budget.lua")   -- global, so `lua budget.report()` works from dev.py
@@ -81,8 +81,6 @@ local REACH = {                      -- how close the ball's centre must come to
 }
 local CUE = {                        -- the hints' timing (seconds)
   react = 0.35,                      -- a beat to react before a dash
-  swing = 0.4,                       -- draw the swing this long before contact
-  gap = 0.6,                         -- between the swing cue and a jump cue
   retry = 0.08,                      -- between tries of a swing line that can't meet the ball yet
 }
 

@@ -14,8 +14,6 @@ local qmul, rot, v = game.qmul, game.rot, game.v
 local bat_model, hands, joint, mannequin_model = game.bat_model, game.hands, game.joint, game.mannequin_model
 -- from serve_meter.lua
 local draw_meter, draw_rating = game.draw_meter, game.draw_rating
--- from planner.lua
-local is_planning = game.is_planning
 
 local trail = {}                      -- where the ball was, newest first, one every TRAIL_STEP seconds
 local TRAIL_STEP, TRAIL_WIDTH = 1 / 30, 0.05
@@ -337,22 +335,20 @@ local function draw_ui()
     text(title_case(message), (w - text_width(title_case(message), 30)) / 2, h * 0.14, 30, 1, 0.85, 0.55)
   end
   -- The next move and when: a fixed white target ring, and a coloured ring closing onto it. When they meet it's
-  -- the moment: the target turns green and says "Now!". One move at a time (dash, jump, swing), each dropped once
+  -- the moment: the target turns green and says "Now!". One move at a time (dash, jump), each dropped once
   -- it's done.
   if game.hint and game.hint.moves and game.state == "rally" and game.last_hitter == "robot" then
     local now, b = sys.time(), you.body
     local done = {
       dash = b.dash ~= nil or math.sqrt((b.x - game.hint.x) ^ 2 + (b.z - game.hint.z) ^ 2) < 0.3,
       jump = b.jump_t ~= nil and not jump_recovering(b),
-      swing = you.swing_planned or you.waiting_line ~= nil or is_planning(you),
     }
     local cue
     for _, mv in ipairs(game.hint.moves) do
       if not done[mv.kind] and now < mv.at + 0.2 then cue = mv break end
     end
     if cue then
-      local CUES = { dash = { game.hint.x < b.x and "<< Dash" or "Dash >>", 1, 0.6, 0.25 }, jump = { "Jump", 0.4, 0.85, 1 },
-                     swing = { "Swing", 1, 0.45, 0.8 } }
+      local CUES = { dash = { game.hint.x < b.x and "<< Dash" or "Dash >>", 1, 0.6, 0.25 }, jump = { "Jump", 0.4, 0.85, 1 } }
       local c = CUES[cue.kind]
       local cx, cy, target = w / 2, h * 0.8, 44                -- below your mannequin
       local left = cue.at - now

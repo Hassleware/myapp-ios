@@ -15,19 +15,6 @@ local function rot(q, p) return v(lib.quat_rotate(q[1], q[2], q[3], q[4], p[1], 
 local function mirror_turn(q) return { q[1], -q[2], -q[3], q[4] } end   -- the turn seen in a mirror across x = 0
 local function yaw_turn(angle) return { 0, math.sin(angle / 2), 0, math.cos(angle / 2) } end
 
-local function from_to(a, b)
-  a, b = unit(a), unit(b)
-  local c = dot(a, b)
-  if c < -0.9999 then
-    local axis = unit(math.abs(a[1]) < 0.9 and cross(a, v(1, 0, 0)) or cross(a, v(0, 1, 0)))
-    return { axis[1], axis[2], axis[3], 0 }
-  end
-  local axis = cross(a, b)
-  local q = { axis[1], axis[2], axis[3], 1 + c }
-  local l = math.sqrt(q[1] ^ 2 + q[2] ^ 2 + q[3] ^ 2 + q[4] ^ 2)
-  return { q[1] / l, q[2] / l, q[3] / l, q[4] / l }
-end
-
 -- From turn a part of the way to turn b, the short way round.
 local function toward(a, b, t)
   if a[1] * b[1] + a[2] * b[2] + a[3] * b[3] + a[4] * b[4] < 0 then b = { -b[1], -b[2], -b[3], -b[4] } end
@@ -57,6 +44,6 @@ return {
   v = v, add = add, sub = sub, mul = mul,
   dot = dot, len = len, unit = unit, cross = cross,
   qmul = qmul, qinv = qinv, rot = rot, mirror_turn = mirror_turn,
-  yaw_turn = yaw_turn, from_to = from_to, toward = toward, axes_turn = axes_turn,
+  yaw_turn = yaw_turn, toward = toward, axes_turn = axes_turn,
 }
 end

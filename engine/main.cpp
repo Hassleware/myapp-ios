@@ -313,21 +313,20 @@ void frame() {
         }
     }
     draw_phone_frame();
-    gfx::end_frame(script::game_time());
-    input::end_frame();
-
 #if defined(GFX_SCREENSHOT)
     // Debugging aid: GAMELAB_SHOT=file.bmp saves the 30th frame and quits.
     static int frames = 0;
     const char* shot = SDL_getenv("GAMELAB_SHOT");
     const char* when = SDL_getenv("GAMELAB_SHOT_FRAME");
     if (shot && ++frames == (when ? SDL_atoi(when) : 30)) {
-        gfx::screenshot(shot);
+        gfx::screenshot(shot);   // taken by the end_frame below
         SDL_Event quit = {};
         quit.type = SDL_EVENT_QUIT;
         SDL_PushEvent(&quit);
     }
 #endif
+    gfx::end_frame(script::game_time());
+    input::end_frame();
 }
 
 }  // namespace app

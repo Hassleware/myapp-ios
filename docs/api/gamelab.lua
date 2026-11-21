@@ -320,9 +320,9 @@ function phys.debug() end
 --- Loads a sound. stream = true plays a long .ogg from the file a little at a time, for music.
 function audio.load(file, stream) end
 
---- `audio.play(sound [, volume, pitch, loop, group]) -> voice`
+--- `audio.play(sound [, db, pitch, loop, group]) -> voice`
 --- Starts a sound and returns the voice playing it. group is 0 to 7.
-function audio.play(sound, volume, pitch, loop, group) end
+function audio.play(sound, db, pitch, loop, group) end
 
 --- `audio.stop(voice [, fade_seconds])`
 --- Stops a voice, at once or by fading out.

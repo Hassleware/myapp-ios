@@ -49,10 +49,12 @@ balls), `REACH` (how close the bat must come), `CUE` (hint timing), `FEEL` (hit-
   and restart with `game.rally`'s `new_game()` when `game.state == "over"`. Override `sys.time_scale` (or set
   `FEEL.stop = 0`) so the hit-stop doesn't slow it down, and never let a probe call `save.set` (it would change
   your saved wins).
-- A behaviour check that survives refactors: a probe that only touches the engine (`input.touches` fed with fake
-  swipes and flicks, `sys.real_time` stepped with the game) and reads `ball` and `game.score`, with a fixed
-  random seed, gives the same trace hash every run. The CEV refactor of 21 November 2026 was checked this way:
-  3781b6b0 (swipes) and 199a66a6 (swipes, jumps, dashes, hovers) before and after every step.
+- **`python tools/dream-table/selftest.py`** is the behaviour test: two self-play runs of 30,000 steps (swipes only,
+  and swipes with jumps, dashes and hovers), each about 30 s. They touch only the engine (`input.touches` fed
+  with fake swipes and flicks, `sys.real_time` stepped with the game) and read `ball` and `game.score`, with a
+  fixed random seed, so each gives the same trace hash every run. Same hash: gameplay unchanged. A change you
+  meant to make changes it: play to check, then update `EXPECTED` in `selftest.py`. The probes are in
+  `tools/dream-table/selftest/`; the script puts `main.lua` back even when a run fails.
 - `python tools/dev.py check dream-table` after any change to 2D drawing or touch controls.
 - `lua budget.report()` from dev.py, or B on the PC, for the PS1 budget.
 

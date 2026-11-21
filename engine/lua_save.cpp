@@ -19,8 +19,9 @@ int l_save_get(lua_State* l) {
         lua_settop(l, 2);
         return 1;
     }
-    if (found->second.isNumber) lua_pushnumber(l, SDL_strtod(found->second.text.c_str(), nullptr));
-    else lua_pushstring(l, found->second.text.c_str());
+    // As Lua reads it: "3" comes back as the whole number 3, not 3.0.
+    if (found->second.isNumber && lua_stringtonumber(l, found->second.text.c_str()) == 0) lua_pushnumber(l, 0);
+    else if (!found->second.isNumber) lua_pushstring(l, found->second.text.c_str());
     return 1;
 }
 

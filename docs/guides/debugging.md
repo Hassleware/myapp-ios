@@ -106,7 +106,6 @@ Environment variables, set before running:
 | `GAMELAB_DEVICE=1u` | Start inside phone frame 1, upright (`1` for sideways). Frame 1 is the iPhone 11 shape, the team's test phone |
 | `GAMELAB_WINDOW=414x896` | Open the window at that size |
 | `GAMELAB_NO_MSAA=1` | Turn off edge smoothing |
-| `GAMELAB_NET_CHECK=1` | Run the web-call safety checks at start and print the result |
 | `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` | Check every Vulkan call (needs the Vulkan SDK) |
 
 In PowerShell:

@@ -74,7 +74,9 @@ void load_saves() {
 void write_saves() {
     std::string text;
     for (const auto& entry : saves) text += std::string(entry.second.isNumber ? "n" : "s") + "\t" + entry.first + "\t" + entry.second.text + "\n";
-    SDL_SaveFile(savePath.c_str(), text.data(), text.size());
+    // Written beside the old file, then swapped in, so an app killed mid-write keeps the last good save.
+    std::string part = savePath + ".part";
+    if (SDL_SaveFile(part.c_str(), text.data(), text.size())) SDL_RenamePath(part.c_str(), savePath.c_str());
 }
 
 std::string clean(const char* s) {
@@ -157,7 +159,8 @@ int l_print(lua_State* l) {
 // include("enemies.lua") runs another file from the game's folder.
 int l_include(lua_State* l) {
     std::string name = luaL_checkstring(l, 1), source;
-    if (name.find("..") != std::string::npos || !read_file(gameDir + "/" + name, source)) return luaL_error(l, "include: can't read '%s'", name.c_str());
+    std::string path = gfx::game_path(name);
+    if (path.empty() || !read_file(path, source)) return luaL_error(l, "include: can't read '%s'", name.c_str());
     if (luaL_loadbuffer(l, source.data(), source.size(), ("@" + name).c_str()) != LUA_OK) return lua_error(l);
     lua_call(l, 0, LUA_MULTRET);
     return lua_gettop(l) - 1;

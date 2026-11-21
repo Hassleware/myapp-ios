@@ -4,7 +4,7 @@
 -- Made by main.lua: include("skeleton.lua")(game) returns the functions below; the shared game table carries
 -- everything it uses from elsewhere (listed at the top) and the state the files share (game.state, game.score...).
 return function(game)
-local bone_local = model.bone_local or model["local"]   -- a bone's own transform (older apps only have the second)
+local bone_local = model.bone_local   -- a bone's own transform (needs an app from 21 November 2026 or later)
 -- from main.lua
 local SERVE, lib = game.SERVE, game.lib
 -- from vec.lua

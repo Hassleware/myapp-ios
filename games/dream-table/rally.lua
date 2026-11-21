@@ -102,7 +102,7 @@ local function launch_ball(by, vx, vy, vz, serving)
   game.last_hitter, game.bounces = by, { you = 0, robot = 0 }
   serve_ball, serve_bounced = serving or false, false
   game.state = "rally"
-  audio.play(FEEL.hit, by == "you" and 1 or 0.7, by == "you" and 1 or 1.08)
+  audio.play(FEEL.hit, by == "you" and 0 or -3, by == "you" and 1 or 1.08)   -- decibels: the robot's is 3 dB quieter
   FEEL.stop_until = sys.real_time() + (by == "you" and FEEL.stop or FEEL.stop * 0.6)
   FEEL.kick = by == "you" and FEEL.shake or FEEL.shake * 0.4
   sys.time_scale(0)
@@ -235,7 +235,7 @@ local function step_ball(dt)
 
   -- The table.
   if ball.y - BALL_R <= TABLE_Y and ball.vy < 0 and py - BALL_R >= TABLE_Y - 0.02 and math.abs(ball.x) <= HALF_W and math.abs(ball.z) <= HALF_L then
-    audio.play(FEEL.bounce, math.min(1, 0.3 + math.abs(ball.vy) * 0.15), 1)
+    audio.play(FEEL.bounce, 20 * math.log(math.min(1, 0.3 + math.abs(ball.vy) * 0.15), 10), 1)   -- harder bounces louder (dB)
     if ball.z > 0 then FEEL.landing = nil end
     ball.y, ball.vy = TABLE_Y + BALL_R, -ball.vy * BOUNCE
     ball.vx, ball.vz = ball.vx * 0.97, ball.vz * 0.97

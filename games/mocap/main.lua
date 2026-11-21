@@ -25,7 +25,7 @@ local started, why_not = false, nil
 local state = "idle"          -- idle, countdown, recording, sending, processing
 local countdown, record_start = 0, 0
 local status = ""
-local takes = math.floor(save.get("takes", 0))
+local takes = save.get("takes", 0)
 local pose, parents, tracked = {}, {}, false
 local result, showing_result, result_start = nil, false, 0   -- the PC's result: { fps, parents, frames }
 local buttons

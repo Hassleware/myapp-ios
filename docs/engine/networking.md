@@ -62,18 +62,17 @@ All of them are checked in one place, before anything leaves the device.
 
 ### Proof that it holds
 
-The checks have their own test, built into the engine:
+The checks have their own test, `tests/net_test.cpp`. Every GitHub build runs it before it builds the app, and a failure stops the build:
 
-::: source engine/net.cpp self_check
+::: source tests/net_test.cpp main
 
-Run it with:
+To run it yourself, in WSL or on a Mac:
 
-```powershell
-$env:GAMELAB_NET_CHECK = "1"
-python tools/dev.py run net-demo
+```bash
+clang++ -std=c++17 -Iengine engine/net.cpp tests/net_test.cpp -o net_test -pthread && ./net_test
 ```
 
-It prints `net self-check passed`. **If you change anything in `net.cpp`, run this**, and add a case for whatever you changed.
+It prints one line per case and `all passed`. **If you change anything in `net.cpp`, add a case here** for whatever you changed.
 
 ## How a request travels
 
@@ -234,7 +233,7 @@ What an app *may* hold is what one player's own login gives it: a token that onl
     - `https://example.com@evil.com/` : no, here `example.com` is a user name and the host is `evil.com`
     - `http://example.com/` : no, not encrypted
 
-    Every one of these is a case in `self_check`.
+    Every one of these is a case in `tests/net_test.cpp`.
 
 ??? example "2. Poll a server once every two seconds"
     ```lua

@@ -154,7 +154,8 @@ void mat_multiply(const float a[16], const float b[16], float out[16]);
 void mat_from_trs(const float pos[3], const float quat[4], const float scale[3], float out[16]);
 
 #if defined(GFX_SCREENSHOT)
-bool screenshot(const std::string& path);
+// Saves the frame the next end_frame draws as a BMP file, before it goes to the screen.
+void screenshot(const std::string& path);
 #endif
 
 }  // namespace gfx

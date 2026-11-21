@@ -199,44 +199,6 @@ void finish(const Response& response) {
     finished->push_back(response);
 }
 
-// The checks that keep requests where they are meant to go. Run with GAMELAB_NET_CHECK=1 set; prints the result.
-void self_check() {
-    hosts = {"example.com"};
-    int failures = 0;
-    auto expect = [&](bool refused, Request r) {
-        if (check(r).empty() == refused) {
-            ++failures;
-            fprintf(stderr, "net self-check FAILED for %s\n", r.url.c_str());
-        }
-    };
-    auto url = [](const char* text) { Request r; r.url = text; return r; };
-    expect(false, url("https://example.com/a?b=1"));
-    expect(false, url("https://API.example.com:8443"));
-    expect(true, url("http://example.com/"));                 // not encrypted
-    expect(true, url("https://evil.com/"));                   // not listed
-    expect(true, url("https://notexample.com/"));             // only looks like the listed host
-    expect(true, url("https://example.com.evil.com/"));
-    expect(true, url("https://example.com@evil.com/"));       // "example.com" is a user name here
-    expect(true, url("https://evil.com\\@example.com/"));
-    expect(true, url("https://example.com/a b"));
-    Request r = url("https://example.com/");
-    r.headers = {{"X-Test", "a\r\nHost: evil.com"}};
-    expect(true, r);
-    r.headers.clear();
-    r.method = "CONNECT";
-    expect(true, r);
-    Request b;
-    b.backend = true;
-    b.url = "/scores?top=10";
-    expect(false, b);
-    b.url = "scores";                                         // must start with /
-    expect(true, b);
-    b.url = "/a b";
-    expect(true, b);
-    hosts.clear();
-    fprintf(stderr, failures ? "net self-check: %d FAILED\n" : "net self-check passed\n", failures);
-}
-
 }  // namespace
 
 void set_backend(const std::string& game, const std::string& releaseUrl) {
@@ -246,8 +208,6 @@ void set_backend(const std::string& game, const std::string& releaseUrl) {
 }
 
 void set_hosts(const std::string& list) {
-    static bool checked = getenv("GAMELAB_NET_CHECK") ? (self_check(), true) : false;
-    (void)checked;
     hosts.clear();
     std::string word;
     for (size_t i = 0; i <= list.size(); i++) {

@@ -693,6 +693,11 @@ bool begin_frame() {
     return true;
 }
 
+#if defined(GFX_SCREENSHOT)
+static std::string shotPath;   // set by screenshot(), saved by end_frame before the frame is presented
+static bool save_screen(const std::string& path);
+#endif
+
 void end_frame(float timeSeconds) {
     if (cur != 0) target(0);
     passes[0].state = fs;
@@ -800,6 +805,12 @@ void end_frame(float timeSeconds) {
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &renderDone[imageIndex];
     vkQueueSubmit(queue, 1, &submit, frameFence);
+#if defined(GFX_SCREENSHOT)
+    if (!shotPath.empty()) {   // the image is still ours here; after vkQueuePresentKHR it belongs to the screen
+        save_screen(shotPath);
+        shotPath.clear();
+    }
+#endif
 
     VkPresentInfoKHR present = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     present.waitSemaphoreCount = 1;
@@ -1343,8 +1354,10 @@ Usage usage() {
 
 #if defined(GFX_SCREENSHOT)
 
-// Debugging aid, off by default: saves the frame that was just drawn as a BMP file.
-bool screenshot(const std::string& path) {
+// Debugging aid, off by default: saves the frame end_frame has just drawn, before it is presented, as a BMP file.
+void screenshot(const std::string& path) { shotPath = path; }
+
+static bool save_screen(const std::string& path) {
     vkDeviceWaitIdle(device);
     uint32_t count = 0;
     vkGetSwapchainImagesKHR(device, swapchain, &count, nullptr);
@@ -1360,6 +1373,7 @@ bool screenshot(const std::string& path) {
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {extent.width, extent.height, 1};
     vkCmdCopyImageToBuffer(c, images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixels.buffer, 1, &region);
+    transition(c, images[imageIndex], VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     end_one_time_commands();
 
     bool bgr = colorFormat == VK_FORMAT_B8G8R8A8_UNORM || colorFormat == VK_FORMAT_B8G8R8A8_SRGB;

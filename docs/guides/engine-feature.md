@@ -105,7 +105,7 @@ The Lua function is the part people live with. Some conventions that keep the AP
 - [ ] New `.cpp` or `.mm` files are in `CMakeLists.txt`
 - [ ] The function is described in `docs/api/gamelab.lua`, and the handbook builds without warnings
 - [ ] Renderer changes are clean under the validation layers
-- [ ] `net.cpp` changes pass `GAMELAB_NET_CHECK=1`
+- [ ] `net.cpp` changes have a case in `tests/net_test.cpp`
 - [ ] Code that cannot be compiled on Windows (`devsync.cpp`, `ios/`) has been read twice
 - [ ] `FrameData` / `PushData` changes were made on both the C++ and the Slang side, and every shader recompiled
 - [ ] Any shortcut taken is marked with a `ponytail:` comment saying when to revisit it
