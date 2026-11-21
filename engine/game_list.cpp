@@ -13,6 +13,14 @@
 #include "gfx.h"
 #include "input.h"
 
+#if defined(LOADER_SYNC)
+#include "devsync.h"
+#endif
+
+#ifndef BUILD_FINGERPRINT
+#define BUILD_FINGERPRINT "dev"
+#endif
+
 namespace app {
 
 // ---- The game list's background: gold with tilted stars down to just past the list, a sawtooth edge with a
