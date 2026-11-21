@@ -1,4 +1,4 @@
-#include "collide.h"
+#include "phys.h"
 
 #include <SDL3/SDL.h>
 
@@ -6,9 +6,9 @@
 #include <cmath>
 #include <cstring>
 
-#include "pool.h"
+#include "handles.h"
 
-namespace collide {
+namespace phys {
 namespace {
 
 enum Kind { SPHERE, CAPSULE, BOX, MESH };
@@ -586,4 +586,4 @@ void debug_draw() {
     });
 }
 
-}  // namespace collide
+}  // namespace phys

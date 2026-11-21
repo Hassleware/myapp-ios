@@ -1,9 +1,9 @@
-// Runs the phone's sync code (engine/sync.cpp) against a real dev.py, before the iPhone app is built.
-// sync.cpp can't be compiled on Windows, so without this a broken sync only shows up on the phone.
+// Runs the phone's sync code (engine/devsync.cpp) against a real dev.py, before the iPhone app is built.
+// devsync.cpp can't be compiled on Windows, so without this a broken sync only shows up on the phone.
 // The GitHub workflow starts dev.py, then runs this. Exit code 0 means every check passed.
 //
-//   clang++ -std=c++17 -Iengine engine/sync.cpp tests/sync_test.cpp -o sync_test -pthread
-//   ./sync_test <repo folder>
+//   clang++ -std=c++17 -Iengine engine/devsync.cpp tests/devsync_test.cpp -o devsync_test -pthread
+//   ./devsync_test <repo folder>
 
 #include <sys/stat.h>
 
@@ -14,7 +14,7 @@
 #include <string>
 #include <thread>
 
-#include "sync.h"
+#include "devsync.h"
 
 static int failures = 0;
 

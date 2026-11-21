@@ -62,7 +62,7 @@ Art tools and screens use sRGB, where numbers are not proportional to light. Lig
 
 - Colours passed from Lua are converted to linear on the processor.
 
-    ::: source engine/gfx.cpp lin
+    ::: source engine/gfx.cpp srgb_to_linear
 
 - Textures are stored in an sRGB format, so the chip converts them when a shader samples them. Textures loaded with the `"data"` option (normal maps) are left alone.
 - The screen is an sRGB format, so the chip converts back when writing.

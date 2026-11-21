@@ -16,11 +16,11 @@ Explained in [Models and animation](../engine/models.md).
 
 ::: file engine/model.h
 
-## collide.h: collision
+## phys.h: collision
 
 Explained in [Collision](../engine/collision.md).
 
-::: file engine/collide.h
+::: file engine/phys.h
 
 ## audio.h: sound
 
@@ -46,14 +46,14 @@ Explained in [A frame, start to finish](../engine/lifecycle.md).
 
 ::: file engine/script.h
 
-## sync.h: Wi-Fi sync (loader only)
+## devsync.h: Wi-Fi sync (loader only)
 
 Explained in [Wi-Fi sync](../engine/sync.md).
 
-::: file engine/sync.h
+::: file engine/devsync.h
 
-## pool.h: handles
+## handles.h: handles
 
 Used by every subsystem that hands numbers to Lua.
 
-::: file engine/pool.h
+::: file engine/handles.h

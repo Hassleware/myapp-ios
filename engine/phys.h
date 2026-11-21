@@ -5,7 +5,7 @@
 
 #include "gfx.h"
 
-namespace collide {
+namespace phys {
 
 typedef uint32_t Handle;
 
@@ -42,4 +42,4 @@ Moved slide(Handle body, const float delta[3], uint32_t mask, float stepHeight, 
 
 void debug_draw();
 
-}  // namespace collide
+}  // namespace phys

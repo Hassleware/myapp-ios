@@ -9,13 +9,13 @@ The engine is a small C++ program built on three libraries: **SDL3** for the win
 | `engine/main.cpp` | (none) | The app itself: start-up, the frame loop, the game list, hot reload, the log file, the PC-only phone frames |
 | `engine/gfx.cpp` | `gfx` | All drawing. The only file that talks to Vulkan |
 | `engine/model.cpp` | `model` | Loading `.glb` files, skeletons, animation |
-| `engine/collide.cpp` | `collide` | Collision shapes and the questions asked about them |
+| `engine/phys.cpp` | `phys` | Collision shapes and the questions asked about them |
 | `engine/audio.cpp` | `audio` | Mixing sound |
 | `engine/input.cpp` | `input` | Touch, sticks and buttons, sensors, game pads, the keyboard |
 | `engine/net.cpp` | `net` | HTTPS requests, calls to the game's own backend, and every safety rule on them |
 | `engine/script.cpp` | `script` | Running a game's Lua and giving it the API |
-| `engine/sync.cpp` | `devsync` | Loader only: fetching changed game files from the PC |
-| `engine/pool.h` | | The handle pool every subsystem uses |
+| `engine/devsync.cpp` | `devsync` | Loader only: fetching changed game files from the PC |
+| `engine/handles.h` | | The handle pool every subsystem uses |
 | `engine/shaders/` | | `common.slang` and the engine's two shaders |
 | `ios/*.mm` | | The two iPhone-only files |
 
@@ -35,13 +35,13 @@ Each has a page in this section. The headers, which are the fastest way to see w
                │  a game's Lua calls these through script.cpp
    ┌─────┬─────┼─────┬───────┬───────┐
    ▼     ▼     ▼     ▼       ▼       ▼
-  gfx  model collide audio  input   net
+  gfx  model phys    audio  input   net
 ```
 
 Two rules keep this simple:
 
 - **Subsystems do not call upward.** `gfx` knows nothing about Lua. `script` is the only file that includes Lua's headers.
-- **Only `gfx.cpp` touches Vulkan, and only `sync.cpp` touches the dev server.** If you find yourself needing a Vulkan type elsewhere, add a function to `gfx.h` instead.
+- **Only `gfx.cpp` touches Vulkan, and only `devsync.cpp` touches the dev server.** If you find yourself needing a Vulkan type elsewhere, add a function to `gfx.h` instead.
 
 ## The principle: games ask by name
 
@@ -63,7 +63,7 @@ Keep to this when adding features. An API that takes a full path would work on y
 | Loader ("Game Lab") | The engine and every game | Yes (`LOADER_SYNC`) |
 | Standalone | The engine and one game (`SINGLE_GAME`) | No |
 
-The App Store does not allow an app to download code. A standalone build therefore must not contain the sync code at all, and it does not: `sync.cpp` is only compiled into the loader. See [CMake and YAML](../languages/build-files.md).
+The App Store does not allow an app to download code. A standalone build therefore must not contain the sync code at all, and it does not: `devsync.cpp` is only compiled into the loader. See [CMake and YAML](../languages/build-files.md).
 
 ## Dependencies
 

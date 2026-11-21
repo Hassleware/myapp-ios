@@ -8,7 +8,7 @@ struct SDL_Window;
 
 namespace gfx {
 
-typedef uint32_t Handle;   // 0 means "none". See pool.h
+typedef uint32_t Handle;   // 0 means "none". See handles.h
 
 enum Mesh { MESH_CUBE = 0, MESH_SPHERE = 1, MESH_PLANE = 2, MESH_COUNT };
 enum Blend { BLEND_OPAQUE = 0, BLEND_ALPHA = 1, BLEND_ADD = 2 };

@@ -52,7 +52,7 @@ Starting a game:
 
 The whole mechanism is a number that changes when anything in the game's folder does:
 
-::: source engine/main.cpp folder_stamp
+::: source engine/main.cpp game_folder_stamp
 
 It hashes each file's name, size and modified time. The frame loop compares it with the last value and restarts the game on a difference. Because the loader's sync writes downloaded files into a folder, the same code reloads the game on the phone. There is no separate "reload" message for file changes.
 

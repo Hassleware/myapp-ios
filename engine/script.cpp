@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "audio.h"
-#include "collide.h"
+#include "phys.h"
 #include "gfx.h"
 #include "input.h"
 #include "mocap.h"
@@ -709,14 +709,14 @@ uint32_t layer_arg(lua_State* l, int index, uint32_t fallback) { return (uint32_
 
 int l_phys_sphere(lua_State* l) {
     float pos[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)};
-    lua_pushinteger(l, collide::add_sphere(pos, num(l, 4, 0.5f), layer_arg(l, 5, 1)));
+    lua_pushinteger(l, phys::add_sphere(pos, num(l, 4, 0.5f), layer_arg(l, 5, 1)));
     return 1;
 }
 
 // phys.capsule(x, y, z, radius, height [, layer]): upright, with x y z at its middle.
 int l_phys_capsule(lua_State* l) {
     float pos[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)};
-    lua_pushinteger(l, collide::add_capsule(pos, num(l, 4, 0.35f), num(l, 5, 1.8f), layer_arg(l, 6, 1)));
+    lua_pushinteger(l, phys::add_capsule(pos, num(l, 4, 0.35f), num(l, 5, 1.8f), layer_arg(l, 6, 1)));
     return 1;
 }
 
@@ -724,7 +724,7 @@ int l_phys_capsule(lua_State* l) {
 int l_phys_box(lua_State* l) {
     float pos[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)}, half[3] = {num(l, 4, 1) / 2, num(l, 5, 1) / 2, num(l, 6, 1) / 2};
     float quat[4] = {num(l, 7, 0), num(l, 8, 0), num(l, 9, 0), num(l, 10, 1)};
-    lua_pushinteger(l, collide::add_box(pos, quat, half, layer_arg(l, 11, 1)));
+    lua_pushinteger(l, phys::add_box(pos, quat, half, layer_arg(l, 11, 1)));
     return 1;
 }
 
@@ -734,7 +734,7 @@ int l_phys_mesh(lua_State* l) {
     if (!data) return luaL_error(l, "phys.mesh: that mesh is gone");
     float world[16];
     read_matrix(l, 2, world);
-    lua_pushinteger(l, collide::add_mesh(*data, world, layer_arg(l, 12, 1)));
+    lua_pushinteger(l, phys::add_mesh(*data, world, layer_arg(l, 12, 1)));
     return 1;
 }
 
@@ -754,7 +754,7 @@ int l_phys_model(lua_State* l) {
         gfx::mat_multiply(world, nodes[i].world, placed);
         for (gfx::Handle mesh : model::node_meshes(m, (int)i)) {
             const gfx::MeshData* data = gfx::mesh_data(mesh);
-            uint32_t body = data ? collide::add_mesh(*data, placed, layer) : 0;
+            uint32_t body = data ? phys::add_mesh(*data, placed, layer) : 0;
             if (!body) continue;
             lua_pushinteger(l, body);
             lua_rawseti(l, -2, ++made);
@@ -766,22 +766,22 @@ int l_phys_model(lua_State* l) {
 // phys.place(body, x, y, z [, qx, qy, qz, qw])
 int l_phys_place(lua_State* l) {
     float pos[3] = {num(l, 2, 0), num(l, 3, 0), num(l, 4, 0)}, quat[4] = {num(l, 5, 0), num(l, 6, 0), num(l, 7, 0), num(l, 8, 1)};
-    if (!collide::place(handle(l, 1), pos, lua_isnoneornil(l, 5) ? nullptr : quat)) return luaL_error(l, "phys.place: that body is gone, or is a mesh (meshes never move)");
+    if (!phys::place(handle(l, 1), pos, lua_isnoneornil(l, 5) ? nullptr : quat)) return luaL_error(l, "phys.place: that body is gone, or is a mesh (meshes never move)");
     return 0;
 }
 
 int l_phys_position(lua_State* l) {
     float pos[3];
-    if (!collide::position(handle(l, 1), pos)) return luaL_error(l, "phys.position: that body is gone");
+    if (!phys::position(handle(l, 1), pos)) return luaL_error(l, "phys.position: that body is gone");
     for (float v : pos) lua_pushnumber(l, v);
     return 3;
 }
 
-int l_phys_remove(lua_State* l) { collide::remove(handle(l, 1)); return 0; }
-int l_phys_clear(lua_State*) { collide::clear(); return 0; }
-int l_phys_debug(lua_State*) { collide::debug_draw(); return 0; }
+int l_phys_remove(lua_State* l) { phys::remove(handle(l, 1)); return 0; }
+int l_phys_clear(lua_State*) { phys::clear(); return 0; }
+int l_phys_debug(lua_State*) { phys::debug_draw(); return 0; }
 
-int push_hit(lua_State* l, const collide::Hit& hit) {
+int push_hit(lua_State* l, const phys::Hit& hit) {
     if (!hit.hit) return 0;
     lua_pushnumber(l, hit.distance);
     for (float v : hit.point) lua_pushnumber(l, v);
@@ -793,20 +793,20 @@ int push_hit(lua_State* l, const collide::Hit& hit) {
 // phys.raycast(ox, oy, oz,  dx, dy, dz,  distance [, mask [, ignore]]) -> nothing, or: distance, x, y, z, nx, ny, nz, body
 int l_phys_raycast(lua_State* l) {
     float origin[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)}, dir[3] = {num(l, 4, 0), num(l, 5, -1), num(l, 6, 0)};
-    return push_hit(l, collide::raycast(origin, dir, num(l, 7, 1000), layer_arg(l, 8, 0xFFFFFFFFu), handle(l, 9)));
+    return push_hit(l, phys::raycast(origin, dir, num(l, 7, 1000), layer_arg(l, 8, 0xFFFFFFFFu), handle(l, 9)));
 }
 
 // phys.spherecast(ox, oy, oz,  dx, dy, dz,  distance, radius [, mask [, ignore]]): a ball swept along a line.
 int l_phys_spherecast(lua_State* l) {
     float origin[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)}, dir[3] = {num(l, 4, 0), num(l, 5, -1), num(l, 6, 0)};
-    return push_hit(l, collide::spherecast(origin, dir, num(l, 7, 1000), num(l, 8, 0.25f), layer_arg(l, 9, 0xFFFFFFFFu), handle(l, 10)));
+    return push_hit(l, phys::spherecast(origin, dir, num(l, 7, 1000), num(l, 8, 0.25f), layer_arg(l, 9, 0xFFFFFFFFu), handle(l, 10)));
 }
 
 // phys.overlap(x, y, z, radius [, mask]) -> a list of the bodies that ball touches.
 int l_phys_overlap(lua_State* l) {
     float center[3] = {num(l, 1, 0), num(l, 2, 0), num(l, 3, 0)};
-    static std::vector<collide::Handle> found;
-    collide::overlap(center, num(l, 4, 0.5f), layer_arg(l, 5, 0xFFFFFFFFu), found);
+    static std::vector<phys::Handle> found;
+    phys::overlap(center, num(l, 4, 0.5f), layer_arg(l, 5, 0xFFFFFFFFu), found);
     lua_createtable(l, (int)found.size(), 0);
     for (size_t i = 0; i < found.size(); i++) {
         lua_pushinteger(l, found[i]);
@@ -820,8 +820,8 @@ int l_phys_overlap(lua_State* l) {
 int l_phys_move(lua_State* l) {
     float delta[3] = {num(l, 2, 0), num(l, 3, 0), num(l, 4, 0)}, unused[3];
     uint32_t body = handle(l, 1);
-    if (!collide::position(body, unused)) return luaL_error(l, "phys.move: that body is gone");
-    collide::Moved moved = collide::slide(body, delta, layer_arg(l, 5, 0xFFFFFFFFu), num(l, 6, 0.3f), num(l, 7, 50));
+    if (!phys::position(body, unused)) return luaL_error(l, "phys.move: that body is gone");
+    phys::Moved moved = phys::slide(body, delta, layer_arg(l, 5, 0xFFFFFFFFu), num(l, 6, 0.3f), num(l, 7, 50));
     for (float v : moved.pos) lua_pushnumber(l, v);
     lua_pushboolean(l, moved.grounded);
     lua_pushboolean(l, moved.blocked);
@@ -1307,7 +1307,7 @@ bool load(const std::string& dir, const std::string& saveFile) {
         {"size", l_size}, {"safe", l_safe}, {nullptr, nullptr}};
     const luaL_Reg modelFunctions[] = {{"load", l_model_load}, {"nodes", l_model_nodes}, {"clips", l_model_clips}, {"draw", l_model_draw},
                                        {"animator", l_model_animator}, {"pose", l_model_pose}, {"joint", l_model_joint},
-                                       {"local", l_model_local}, {"sample", l_model_sample}, {nullptr, nullptr}};
+                                       {"local", l_model_local}, {"bone_local", l_model_local}, {"sample", l_model_sample}, {nullptr, nullptr}};
     const luaL_Reg physFunctions[] = {{"sphere", l_phys_sphere}, {"capsule", l_phys_capsule}, {"box", l_phys_box}, {"mesh", l_phys_mesh},
                                       {"model", l_phys_model}, {"place", l_phys_place}, {"position", l_phys_position}, {"remove", l_phys_remove},
                                       {"clear", l_phys_clear}, {"raycast", l_phys_raycast}, {"spherecast", l_phys_spherecast},
@@ -1374,7 +1374,7 @@ void unload() {
     cameraSerial = -1;
     input::keyboard(false);
     input::set_controls({});
-    collide::clear();
+    phys::clear();
 }
 
 void update(float dt) {

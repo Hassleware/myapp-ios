@@ -23,7 +23,7 @@
 #include <vector>
 
 #include "font8x8_basic.h"
-#include "pool.h"
+#include "handles.h"
 
 #define STBI_NO_STDIO
 #define STBI_ONLY_PNG
@@ -269,10 +269,10 @@ void look_at(const float eye[3], const float target[3], const float upHint[3], f
 
 // Colours arrive the way people pick them (sRGB). Lighting is worked out in linear light,
 // and the screen converts back. This is a close, cheap version of the exact curve.
-float lin(float c) { return c <= 0 ? 0 : c * (c * (c * 0.305306011f + 0.682171111f) + 0.012522878f); }
+float srgb_to_linear(float c) { return c <= 0 ? 0 : c * (c * (c * 0.305306011f + 0.682171111f) + 0.012522878f); }
 
-void lin4(const float in[4], float out[4]) {
-    out[0] = lin(in[0]); out[1] = lin(in[1]); out[2] = lin(in[2]); out[3] = in[3];
+void srgb_to_linear4(const float in[4], float out[4]) {
+    out[0] = srgb_to_linear(in[0]); out[1] = srgb_to_linear(in[1]); out[2] = srgb_to_linear(in[2]); out[3] = in[3];
 }
 
 // The part of the window the game is drawn in: all of it, unless a border has been asked for.
@@ -361,7 +361,7 @@ VkImageView create_view(VkImage image, VkFormat format, VkImageAspectFlags aspec
 }
 
 // A short job for the GPU that is finished before the call returns: uploads and the like.
-VkCommandBuffer once_begin() {
+VkCommandBuffer begin_one_time_commands() {
     VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkResetCommandBuffer(onceCmd, 0);
@@ -369,7 +369,7 @@ VkCommandBuffer once_begin() {
     return onceCmd;
 }
 
-void once_end() {
+void end_one_time_commands() {
     vkEndCommandBuffer(onceCmd);
     VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
@@ -486,11 +486,11 @@ bool upload_pixels(Texture& t, const uint8_t* rgba) {
         offset += bytes;
         w = SDL_max(1, w / 2); h = SDL_max(1, h / 2);
     }
-    VkCommandBuffer c = once_begin();
+    VkCommandBuffer c = begin_one_time_commands();
     transition(c, t.image, VK_IMAGE_ASPECT_COLOR_BIT, t.mips, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vkCmdCopyBufferToImage(c, staging.buffer, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)regions.size(), regions.data());
     transition(c, t.image, VK_IMAGE_ASPECT_COLOR_BIT, t.mips, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    once_end();
+    end_one_time_commands();
     destroy_buffer(staging);
     return true;
 }
@@ -1013,7 +1013,7 @@ void build_meshes() {
 
 // ---- this frame's vertices: 2D shapes, text, particles, lines, skinned meshes ----
 
-Vertex* dyn_alloc(uint32_t count, uint32_t& first) {
+Vertex* frame_alloc(uint32_t count, uint32_t& first) {
     if (dynCount + count > MAX_DYNAMIC_VERTS) return nullptr;
     first = dynCount;
     dynCount += count;
@@ -1022,7 +1022,7 @@ Vertex* dyn_alloc(uint32_t count, uint32_t& first) {
 
 void fill_push(PushData& push, const float model[16], const float rgba[4], bool flat, bool noLight) {
     memcpy(push.model, model, sizeof(float) * 16);
-    lin4(rgba, push.color);
+    srgb_to_linear4(rgba, push.color);
     push.flags[0] = flat ? 1.0f : 0.0f;
     push.flags[1] = noLight ? 1.0f : 0.0f;
     push.flags[2] = ds.cutoff;
@@ -1035,7 +1035,7 @@ Vertex* flat_verts(uint32_t count, VkDescriptorSet material) {
     Pass& pass = passes[cur];
     VkPipeline pipeline = pipeline_for(ds.shader, pass_kind(), ds.blend == BLEND_ADD ? BLEND_ADD : BLEND_ALPHA, false, false, false);
     uint32_t first = 0;
-    Vertex* out = dyn_alloc(count, first);
+    Vertex* out = frame_alloc(count, first);
     if (!out || !pipeline || !material) return nullptr;
     if (!pass.flat.empty()) {
         Draw& last = pass.flat.back();
@@ -1476,9 +1476,9 @@ bool init(SDL_Window* win, const std::string& engineShaderDir, std::string& erro
     samplerInfo.magFilter = samplerInfo.minFilter = VK_FILTER_NEAREST;
     samplerInfo.addressModeU = samplerInfo.addressModeV = samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     vkCreateSampler(device, &samplerInfo, nullptr, &shadowSampler);
-    VkCommandBuffer c = once_begin();
+    VkCommandBuffer c = begin_one_time_commands();
     transition(c, shadowTex.image, VK_IMAGE_ASPECT_DEPTH_BIT, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-    once_end();
+    end_one_time_commands();
 
     VkDescriptorBufferInfo bufferInfo = {frameBuffer.buffer, 0, sizeof(FrameData)};
     VkDescriptorImageInfo shadowInfo = {shadowSampler, shadowTex.view, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL};
@@ -1662,7 +1662,7 @@ void end_frame(float timeSeconds) {
         Texture* t = textures.get(passes[i].target);
         if (!t || !t->framebuffer) continue;
         VkClearValue clears[2] = {};
-        for (int c = 0; c < 3; c++) clears[0].color.float32[c] = lin(passes[i].state.clear[c]);
+        for (int c = 0; c < 3; c++) clears[0].color.float32[c] = srgb_to_linear(passes[i].state.clear[c]);
         clears[0].color.float32[3] = 1.0f;
         clears[1].depthStencil.depth = 1.0f;
         VkRenderPassBeginInfo pass = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -1682,7 +1682,7 @@ void end_frame(float timeSeconds) {
 
     VkClearValue clears[3] = {};
     float clearColor[3];
-    for (int c = 0; c < 3; c++) clearColor[c] = lin(passes[0].state.clear[c]);
+    for (int c = 0; c < 3; c++) clearColor[c] = srgb_to_linear(passes[0].state.clear[c]);
     if (inset() == 0) memcpy(clears[0].color.float32, clearColor, sizeof(clearColor));
     clears[0].color.float32[3] = 1.0f;
     clears[1].depthStencil.depth = 1.0f;
@@ -1799,7 +1799,7 @@ void spot_light(const float pos[3], const float dir[3], float radius, float angl
 }
 
 void fog(const float rgb[3], float start, float end) {
-    fs.fogColor[0] = lin(rgb[0]); fs.fogColor[1] = lin(rgb[1]); fs.fogColor[2] = lin(rgb[2]);
+    fs.fogColor[0] = srgb_to_linear(rgb[0]); fs.fogColor[1] = srgb_to_linear(rgb[1]); fs.fogColor[2] = srgb_to_linear(rgb[2]);
     fs.fogColor[3] = end > start ? 1.0f : 0.0f;
     fs.fogRange[0] = start;
     fs.fogRange[1] = end;
@@ -1923,9 +1923,9 @@ Handle new_target(int w, int h) {
         return 0;
     }
     // Readable straight away, in case it is used before anything is drawn into it.
-    VkCommandBuffer c = once_begin();
+    VkCommandBuffer c = begin_one_time_commands();
     transition(c, t.image, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    once_end();
+    end_one_time_commands();
     return textures.add(t);
 }
 
@@ -2074,7 +2074,7 @@ void draw_vertices(Handle meshHandle, const Vertex* vertices, uint32_t count, co
     d.count = (uint32_t)m->data.indices.size();
     if (vertices) {
         uint32_t first = 0;
-        Vertex* out = dyn_alloc(count, first);
+        Vertex* out = frame_alloc(count, first);
         if (!out || count != m->data.vertices.size()) return;
         memcpy(out, vertices, (size_t)count * sizeof(Vertex));
         d.vb = dynBuffer.buffer;
@@ -2133,7 +2133,7 @@ Vertex* world_verts(uint32_t count, bool seeThrough, float depthAt[3]) {
     int mode = ds.blend == BLEND_OPAQUE && seeThrough ? BLEND_ALPHA : ds.blend;
     bool solid = mode == BLEND_OPAQUE;
     uint32_t first = 0;
-    Vertex* out = dyn_alloc(count, first);
+    Vertex* out = frame_alloc(count, first);
     if (!out) return nullptr;
     Draw d;
     d.pipeline = pipeline_for(ds.shader, pass_kind(), mode, ds.depthTest, ds.depthWrite && solid, false);
@@ -2169,7 +2169,7 @@ void particles(const float* data, int count) {
     for (int i = 0; i < count; i++) {
         const float* p = data + i * 8;
         float half = p[3] * 0.5f, color[4];
-        lin4(p + 4, color);
+        srgb_to_linear4(p + 4, color);
         for (int k = 0; k < 6; k++) {
             float cx = corner[k][0] * half, cy = corner[k][1] * half;
             set_vertex(v[i * 6 + k], p[0] + fs.right[0] * cx + fs.up[0] * cy, p[1] + fs.right[1] * cx + fs.up[1] * cy, p[2] + fs.right[2] * cx + fs.up[2] * cy,
@@ -2188,7 +2188,7 @@ void line(const float a[3], const float b[3], const float rgba[4], float width) 
     Vertex* v = world_verts(6, rgba[3] < 1.0f, mid);
     if (!v) return;
     float color[4], h = width * 0.5f;
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     const float* ends[6] = {a, b, b, a, b, a};
     const float sign[6] = {-1, -1, 1, -1, 1, 1};
     for (int k = 0; k < 6; k++)
@@ -2248,20 +2248,20 @@ const std::vector<UiBox>& ui_boxes() { return uiBoxes; }
 void rect(float x, float y, float w, float h, const float rgba[4]) {
     if (uiLogging) uiBoxes.push_back({x, y, w, h, false, ""});
     float color[4];
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     quad_2d(whiteTex, x, y, w, h, color, 0, 0, 1, 1);
 }
 
 void image(Handle tex, float x, float y, float w, float h, const float rgba[4], const float uv[4]) {
     if (uiLogging) uiBoxes.push_back({x, y, w, h, false, ""});
     float color[4];
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     quad_2d(tex, x, y, w, h, color, uv[0], uv[1], uv[2], uv[3]);
 }
 
 void triangle(Handle tex, const float xy[6], const float uv[6], const float rgba[4]) {
     float color[4];
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     Vertex* v = flat_verts(3, flat_material(tex));
     if (!v) return;
     for (int i = 0; i < 3; i++) set_vertex(v[i], xy[i * 2], xy[i * 2 + 1], 0, uv[i * 2], uv[i * 2 + 1], color);
@@ -2273,7 +2273,7 @@ void circle(float cx, float cy, float radius, const float rgba[4]) {
     Vertex* v = flat_verts(segments * 3, flat_material(whiteTex));
     if (!v) return;
     float color[4];
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     for (int i = 0; i < segments; i++) {
         float a0 = 6.2831853f * i / segments, a1 = 6.2831853f * (i + 1) / segments;
         set_vertex(v[i * 3], cx, cy, 0, 0, 0, color);
@@ -2293,7 +2293,7 @@ void text(const std::string& s, float x, float y, float size, const float rgba[4
         uiBoxes.push_back({x, y, text_width(s, size), size * (1 + (lines - 1) * 1.25f), false, s});
     }
     float color[4], penX = x;
-    lin4(rgba, color);
+    srgb_to_linear4(rgba, color);
     Font* f = fonts.get(ds.font);
     if (f) {
         float k = size / f->px * f->boost;
@@ -2384,13 +2384,13 @@ bool screenshot(const std::string& path) {
     VkDeviceSize size = (VkDeviceSize)extent.width * extent.height * 4;
     if (!create_buffer(pixels, size, VK_BUFFER_USAGE_TRANSFER_DST_BIT)) return false;
 
-    VkCommandBuffer c = once_begin();
+    VkCommandBuffer c = begin_one_time_commands();
     transition(c, images[imageIndex], VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkBufferImageCopy region = {};
     region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     region.imageExtent = {extent.width, extent.height, 1};
     vkCmdCopyImageToBuffer(c, images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, pixels.buffer, 1, &region);
-    once_end();
+    end_one_time_commands();
 
     bool bgr = colorFormat == VK_FORMAT_B8G8R8A8_UNORM || colorFormat == VK_FORMAT_B8G8R8A8_SRGB;
     SDL_Surface* shot = SDL_CreateSurfaceFrom((int)extent.width, (int)extent.height, bgr ? SDL_PIXELFORMAT_BGRX32 : SDL_PIXELFORMAT_RGBX32, pixels.mapped, (int)extent.width * 4);

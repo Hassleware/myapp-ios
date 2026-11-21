@@ -22,6 +22,7 @@
 -- (swings), serve_meter.lua (the serve's meter and rating), view.lua (drawing) and rally.lua (ball and rules).
 -- NOTES.md has the map, the tuning tables and how to test.
 
+local bone_local = model.bone_local or model["local"]   -- a bone's own transform (older apps only have the second)
 local lib = include("lib.lua")
 local scenery = include("scenery.lua")
 budget = include("budget.lua")   -- global, so `lua budget.report()` works from dev.py
@@ -273,8 +274,8 @@ end
 -- No legs: a jet torso (the leg bones shrunk to nothing).
 local function hide_legs(m)
   for _, thigh in ipairs(m.legs) do
-    local t1, t2, t3, q1, q2, q3, q4 = model["local"](skeleton.mannequin_model, m.anim.animator, thigh)
-    model["local"](skeleton.mannequin_model, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
+    local t1, t2, t3, q1, q2, q3, q4 = bone_local(skeleton.mannequin_model, m.anim.animator, thigh)
+    bone_local(skeleton.mannequin_model, m.anim.animator, thigh, t1, t2, t3, q1, q2, q3, q4, 0.001, 0.001, 0.001)
   end
 end
 

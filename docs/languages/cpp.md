@@ -42,7 +42,7 @@ Every engine file follows this pattern. A private helper from the real file:
 
 Lua must never hold a C++ pointer: a script could keep one after the thing it points to is gone. Instead the engine hands out numbers, and each number carries a generation that is checked on use.
 
-::: file engine/pool.h
+::: file engine/handles.h
 
 A texture, mesh, font, sound and collision body are all handles from a pool like this. A stale handle simply finds nothing.
 
@@ -107,7 +107,7 @@ Note what it guards against: a game that never defined the function, and a game 
 
 1. `engine/main.cpp`: the function `frame`. Everything that happens each frame starts there. See [A frame, start to finish](../engine/lifecycle.md).
 2. `engine/script.cpp`: skim the `l_` functions for an area you care about.
-3. The header of that area: `gfx.h`, `collide.h`, `audio.h`. All are on the [C++ headers](../reference/headers.md) page.
+3. The header of that area: `gfx.h`, `phys.h`, `audio.h`. All are on the [C++ headers](../reference/headers.md) page.
 4. Only then the `.cpp` behind it.
 
 `gfx.cpp` is the largest file by far. Read [Renderer](../engine/renderer.md) before opening it.
@@ -121,7 +121,7 @@ Note what it guards against: a game that never defined the function, and a game 
 | Build for the phone | `python tools/dev.py ship "message"` |
 | See why a phone build failed | `gh run view <id> --log-failed` |
 
-Two things cannot be compiled on Windows: `engine/sync.cpp` (it uses POSIX sockets) and the files in `ios/`. The GitHub build is their first test, so read those changes twice before shipping.
+Two things cannot be compiled on Windows: `engine/devsync.cpp` (it uses POSIX sockets) and the files in `ios/`. The GitHub build is their first test, so read those changes twice before shipping.
 
 ## Exercises
 

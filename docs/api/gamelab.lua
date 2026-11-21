@@ -246,6 +246,10 @@ function model.joint(m, a, node) end
 --- Reads a bone's own position, or sets it by hand after posing (a head turning to look at something).
 model["local"] = function(m, a, node, ...) end   -- "local" is a Lua keyword, so it is written in brackets
 
+--- `model.bone_local(m, a, node [, <transform>])`
+--- The same as `model["local"]`, under a name that is not a Lua keyword. Needs an app built after 21 November 2026.
+function model.bone_local(m, a, node, ...) end
+
 --- `model.sample(m, clip, node, time) -> <transform>`
 --- Where an animation puts one node at a time, without an animator.
 function model.sample(m, clip, node, time) end

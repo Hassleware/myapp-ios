@@ -1,12 +1,12 @@
 # Collision
 
-`engine/collide.cpp` answers questions about shapes: does this line hit anything, what is inside this ball, how far can this character move before a wall stops it.
+`engine/phys.cpp` answers questions about shapes: does this line hit anything, what is inside this ball, how far can this character move before a wall stops it.
 
 It is **not** a physics engine. Nothing falls, bounces or pushes back by itself. Games move things in Lua and ask these questions to find out what they touch. That is a decision, not a gap: simulation is written in Lua where it can be tuned on the phone, and no physics library is to be added.
 
 ## What it offers
 
-::: file engine/collide.h
+::: file engine/phys.h
 
 ## Shapes
 

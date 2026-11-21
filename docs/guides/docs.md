@@ -49,7 +49,7 @@ The block carries the real line numbers and a link to the file. Several names ca
 **A whole file:**
 
 ```
-::: file engine/pool.h
+::: file engine/handles.h
 ```
 
 **One table of the Lua API:**

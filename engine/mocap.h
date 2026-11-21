@@ -1,4 +1,4 @@
-// Motion capture with ARKit body tracking. iPhone only: implemented in ios/bodytrack.mm.
+// Motion capture with ARKit body tracking. iPhone only: implemented in ios/mocap.mm.
 // Everywhere else these stubs answer that it isn't available, so games still run on the PC.
 #pragma once
 #include <cstddef>

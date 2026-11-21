@@ -20,7 +20,7 @@ Terms you will meet in the code, in `dev.py`'s messages and in conversation.
 :   The engine noticing a game's files changed and restarting that game's Lua, without restarting the app.
 
 **Handle**
-:   A number the engine gives Lua to stand for something it loaded or made (a texture, a mesh, a sound). Lua never holds a pointer. A handle to something that has been freed is detected and ignored. See `engine/pool.h` in [C++ headers](../reference/headers.md).
+:   A number the engine gives Lua to stand for something it loaded or made (a texture, a mesh, a sound). Lua never holds a pointer. A handle to something that has been freed is detected and ignored. See `engine/handles.h` in [C++ headers](../reference/headers.md).
 
 **Transform**
 :   Up to ten numbers describing where something is: position, rotation (a quaternion) and scale.

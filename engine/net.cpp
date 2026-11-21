@@ -2,7 +2,7 @@
 // WinHTTP on Windows, NSURLSession (ios/http.mm) on the iPhone. Both check certificates by default and that is left alone.
 #include "net.h"
 #if defined(LOADER_SYNC)
-#include "sync.h"
+#include "devsync.h"
 #endif
 
 #include <atomic>
@@ -98,7 +98,7 @@ std::string check_target(const Request& r, Target& target) {
         std::string problem = parse(releaseBackend + r.url, target);
         if (!problem.empty()) return problem;
 #else
-        // ponytail: plain http, to the dev PC only (127.0.0.1 here; the loader reaches it through sync.cpp).
+        // ponytail: plain http, to the dev PC only (127.0.0.1 here; the loader reaches it through devsync.cpp).
         target.host = "127.0.0.1";
         target.port = 8765;
         target.secure = false;

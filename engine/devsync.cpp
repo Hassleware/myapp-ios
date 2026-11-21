@@ -1,4 +1,4 @@
-#include "sync.h"
+#include "devsync.h"
 
 #include <arpa/inet.h>
 #include <dirent.h>

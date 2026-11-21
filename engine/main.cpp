@@ -26,7 +26,7 @@
 #include "script.h"
 
 #if defined(LOADER_SYNC)
-#include "sync.h"
+#include "devsync.h"
 #endif
 
 #ifndef BUILD_FINGERPRINT
@@ -79,7 +79,7 @@ void refresh_games() {
 }
 
 // A number that changes whenever any file in the game's folder is added, edited or removed.
-Uint64 folder_stamp(const std::string& dir) {
+Uint64 game_folder_stamp(const std::string& dir) {
     Uint64 stamp = 1469598103934665603ull;
     int count = 0;
     char** entries = SDL_GlobDirectory(dir.c_str(), nullptr, 0, &count);
@@ -162,7 +162,7 @@ void start_game(const std::string& name) {
     net::set_hosts(config_value(dir, "hosts"));
     net::set_backend(name, config_value(dir, "backend"));
     script::load(dir, savesDir + "/" + name + ".txt");
-    watchStamp = folder_stamp(dir);
+    watchStamp = game_folder_stamp(dir);
 }
 
 void show_list() {
@@ -190,7 +190,7 @@ void draw_hud() {
 }
 
 // Breaks long text into lines that fit the screen, since errors can be long.
-std::string wrap(const std::string& text, size_t width) {
+std::string wrap_text(const std::string& text, size_t width) {
     std::string out;
     size_t column = 0;
     for (char c : text) {
@@ -211,7 +211,7 @@ void draw_problem(const std::string& title, const std::string& detail) {
     float w = gfx::view_width();
     gfx::rect(0, 0, w, gfx::view_height(), panel);
     gfx::text(title, 40, 60, 28, red);
-    gfx::text(wrap(detail, (size_t)((w - 80) / 16)), 40, 120, 16, white);
+    gfx::text(wrap_text(detail, (size_t)((w - 80) / 16)), 40, 120, 16, white);
 }
 
 // ---- The game list's background: gold with tilted stars down to just past the list, a sawtooth edge with a
@@ -227,7 +227,7 @@ gfx::Handle goldTex = 0, fadeTex = 0, starTex = 0, stripeTex = 0, shadowTex = 0,
 float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 
 // The gold at (u, v) across the gold area, in sRGB: deep gold, lighter toward the middle right.
-void gold_at(float u, float v, float out[3]) {
+void background_gold_at(float u, float v, float out[3]) {
     float d = std::sqrt((u - 0.8f) * (u - 0.8f) + (v - 0.6f) * (v - 0.6f) * 0.5f);
     float t = clamp01(1.0f - d / 0.9f);
     const float dark[3] = {0.78f, 0.51f, 0.09f}, light[3] = {0.94f, 0.67f, 0.17f};
@@ -256,7 +256,7 @@ void make_background() {
     for (int y = 0; y < GH; y++)
         for (int x = 0; x < GW; x++) {
             float u = (x + 0.5f) / GW, v = (y + 0.5f) / GH, c[3];
-            gold_at(u, v, c);
+            background_gold_at(u, v, c);
             // The fade sits over the stars, so they seem to come out of and go into the sides, top and teeth.
             float edge = std::max({1 - clamp01(u / 0.2f), 1 - clamp01((1 - u) / 0.2f), 1 - clamp01(v / 0.15f),
                                    1 - clamp01((1 - v) / 0.1f)});
@@ -476,7 +476,7 @@ void draw_list() {
     std::string offered = devsync::available_build();
     if (!offered.empty() && offered != BUILD_FINGERPRINT) {
         const float button[4] = {0.36f, 0.82f, 0.63f, 1}, dark[4] = {0.04f, 0.10f, 0.08f, 1};
-        gfx::text(wrap("NEW APP BUILD " + offered + " IS READY. DOWNLOAD IT, THEN IN LIVECONTAINER TAP + AND PICK GAMELAB.IPA", columns),
+        gfx::text(wrap_text("NEW APP BUILD " + offered + " IS READY. DOWNLOAD IT, THEN IN LIVECONTAINER TAP + AND PICK GAMELAB.IPA", columns),
                   left + 8, bottom - 216, 16, ink);
         gfx::rect(left, bottom - 142, right - left, 60, button);
         gfx::text("DOWNLOAD UPDATE", left + (right - left - gfx::text_width("DOWNLOAD UPDATE", 20)) / 2, bottom - 122, 20, dark);
@@ -486,7 +486,7 @@ void draw_list() {
 #else
     status = "Running from the repo. Edit a game's files and it reloads.";
 #endif
-    gfx::text(wrap(status, columns), left + 8, bottom - 60, 16, ink);
+    gfx::text(wrap_text(status, columns), left + 8, bottom - 60, 16, ink);
     std::string build = std::string("build ") + BUILD_FINGERPRINT;
     gfx::text(build, right - 8 - gfx::text_width(build, 12), top + 56, 12, dim);
 }
@@ -522,7 +522,7 @@ int phoneIndex = -1;          // -1: no phone frame
 bool phoneSideways = true;
 
 // Resizes the window to the chosen phone's shape, as large as its real size or the monitor allows.
-void apply_phone() {
+void apply_phone_frame() {
     SDL_RestoreWindow(window);
     if (phoneIndex < 0) {
         gfx::set_bezel(0);
@@ -550,7 +550,7 @@ struct Hidden {
     float corner, cut[4], bar[4];
 };
 
-Hidden phone_hidden(const Phone& p) {
+Hidden phone_frame_hidden(const Phone& p) {
     float w = gfx::view_width(), h = gfx::view_height();
     float k = 720.0f / p.w;   // 2D units per iPhone point: the screen's shorter side is always 720 units
     Hidden z;
@@ -568,7 +568,7 @@ Hidden phone_hidden(const Phone& p) {
 }
 
 // A lozenge filling the given box: a rectangle with fully rounded ends.
-void pill(const float b[4], const float rgba[4]) {
+void rounded_rect(const float b[4], const float rgba[4]) {
     float r = SDL_min(b[2], b[3]) / 2;
     if (b[2] > b[3]) {
         gfx::rect(b[0] + r, b[1], b[2] - 2 * r, b[3], rgba);
@@ -587,7 +587,7 @@ void draw_phone_frame() {
     const Phone& p = phones[phoneIndex];
     const float black[4] = {0, 0, 0, 1}, white[4] = {1, 1, 1, 0.75f};
     float w = gfx::view_width(), h = gfx::view_height();
-    Hidden z = phone_hidden(p);
+    Hidden z = phone_frame_hidden(p);
 
     // Rounded corners, built from thin strips that get wider towards each corner.
     float r = z.corner;
@@ -602,7 +602,7 @@ void draw_phone_frame() {
     }
 
     if (p.island) {
-        pill(z.cut, black);
+        rounded_rect(z.cut, black);
     } else {
         // A notch is square against the phone's edge and rounded on the side that reaches into the screen.
         const float* c = z.cut;
@@ -619,7 +619,7 @@ void draw_phone_frame() {
             gfx::circle(c[0] + c[2] - round, c[1] + c[3] - round, round, black);
         }
     }
-    pill(z.bar, white);
+    rounded_rect(z.bar, white);
 }
 
 // ---- the layout check: `gamelab --check <game>` (or `python tools/dev.py check <game>`) ----
@@ -658,10 +658,10 @@ bool cut_by_corner(const gfx::UiBox& b, float r, float w, float h, std::string& 
     return false;
 }
 
-void check_frame() {
+void layout_check_frame() {
     const Phone& p = phones[phoneIndex];
     float w = gfx::view_width(), h = gfx::view_height();
-    Hidden z = phone_hidden(p);
+    Hidden z = phone_frame_hidden(p);
     std::string way = w > h ? "SIDEWAYS" : "UPRIGHT";
     if (!script::error().empty()) checkFound[way + "\tthe game stopped with an error: " + script::error()].push_back(p.name);
     for (const gfx::UiBox& b : gfx::ui_boxes()) {
@@ -687,12 +687,12 @@ void check_frame() {
 }
 
 // Called at the start of every frame while checking: a few frames per phone, then the report.
-void check_tick() {
+void layout_check_tick() {
     if (checkStep >= 0) {
         checkFrames++;
         if (checkFrames == 4) start_game(current);   // restart once the window has its new shape
         if (checkFrames < 12) return;
-        check_frame();
+        layout_check_frame();
     }
     // A game that only ever runs one way up is only checked that way up.
     ++checkStep;
@@ -722,7 +722,7 @@ void check_tick() {
     }
     phoneIndex = checkStep / 2;
     phoneSideways = checkStep % 2 == 0;
-    apply_phone();
+    apply_phone_frame();
     checkFrames = 0;
 }
 #else
@@ -761,7 +761,7 @@ void update_safe_area() {
 
 void frame() {
 #if !defined(SDL_PLATFORM_IOS)
-    if (checking && !current.empty()) check_tick();
+    if (checking && !current.empty()) layout_check_tick();
 #endif
     Uint64 now = SDL_GetTicks();
     float dt = SDL_min((now - lastTicks) / 1000.0f, 0.05f);
@@ -789,7 +789,7 @@ void frame() {
     // Reload the running game when its files change, on the PC and on the phone alike.
     if (!current.empty() && !syncing && now - lastWatch > 400) {
         lastWatch = now;
-        Uint64 stamp = folder_stamp(game_dir(current));
+        Uint64 stamp = game_folder_stamp(game_dir(current));
         if (stamp != watchStamp) start_game(current);
     }
     if (current.empty() && now - lastListRefresh > 1000) {
@@ -845,7 +845,7 @@ void frame() {
         if (!script::error().empty()) draw_problem("ERROR IN " + current, script::error());
         else if (!gfx::shader_error().empty()) {
             const float red[4] = {1.0f, 0.45f, 0.42f, 1};
-            gfx::text(wrap(gfx::shader_error(), (size_t)((gfx::view_width() - 80) / 14)), 80, 28, 14, red);
+            gfx::text(wrap_text(gfx::shader_error(), (size_t)((gfx::view_width() - 80) / 14)), 80, 28, 14, red);
         }
         if (leave) {
             draw_phone_frame();
@@ -985,7 +985,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
     if (const char* device = SDL_getenv("GAMELAB_DEVICE")) {
         phoneIndex = SDL_clamp(SDL_atoi(device), 1, phoneCount) - 1;
         phoneSideways = !SDL_strchr(device, 'u');   // "1u" starts upright
-        apply_phone();
+        apply_phone_frame();
     }
 #endif
 
@@ -1034,11 +1034,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 #if !defined(SDL_PLATFORM_IOS)
         if (event->key.key == SDLK_F1) {
             if (++phoneIndex >= phoneCount) phoneIndex = -1;
-            apply_phone();
+            apply_phone_frame();
         }
         if (event->key.key == SDLK_F2 && phoneIndex >= 0) {
             phoneSideways = !phoneSideways;
-            apply_phone();
+            apply_phone_frame();
         }
 #endif
         break;

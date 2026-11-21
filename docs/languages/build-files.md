@@ -65,7 +65,7 @@ GitHub Actions runs a list of steps on a machine GitHub provides. Ours asks for 
 
 | Step | Why it exists |
 |---|---|
-| Test the phone's link to dev.py | Compiles `engine/sync.cpp` with `tests/sync_test.cpp` and runs it against a real `dev.py`: connecting, downloading files, removing deleted games, backend calls, the size limit. A failure stops the build, so a broken sync never reaches the phone |
+| Test the phone's link to dev.py | Compiles `engine/devsync.cpp` with `tests/devsync_test.cpp` and runs it against a real `dev.py`: connecting, downloading files, removing deleted games, backend calls, the size limit. A failure stops the build, so a broken sync never reaches the phone |
 | Download MoltenVK | The iPhone has no Vulkan. MoltenVK is linked into the app |
 | Work out what to build | Computes the build code by running `dev.py fingerprint`, and chooses loader or standalone |
 | Reuse the last build folder | Most of a fresh build is setting up SDL3. Keeping the folder between runs skips that |
@@ -112,7 +112,7 @@ Fix, then `ship` again.
 ## Exercises
 
 ??? example "1. Which line makes sure a standalone release contains no sync code?"
-    `if(NOT SINGLE_GAME AND NOT WIN32)` around `set(WITH_SYNC ON)`. Only when `WITH_SYNC` is on does `engine/sync.cpp` join the build and `LOADER_SYNC` get defined.
+    `if(NOT SINGLE_GAME AND NOT WIN32)` around `set(WITH_SYNC ON)`. Only when `WITH_SYNC` is on does `engine/devsync.cpp` join the build and `LOADER_SYNC` get defined.
 
 ??? example "2. You pushed a change to `games/net-demo/main.lua` only. Does GitHub build an app?"
     No. The `paths:` filter does not match.

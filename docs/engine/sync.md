@@ -1,12 +1,12 @@
 # Wi-Fi sync
 
-`engine/sync.cpp` is what makes a saved file appear on the phone a second later. It exists only in the loader build. A standalone game contains none of this code, because the App Store does not allow an app to download code and because a released game has nothing to sync with.
+`engine/devsync.cpp` is what makes a saved file appear on the phone a second later. It exists only in the loader build. A standalone game contains none of this code, because the App Store does not allow an app to download code and because a released game has nothing to sync with.
 
 The other half of the conversation is the server in `tools/dev.py`. See [dev.py and its server](../reference/dev-tool.md) for every address it answers.
 
 ## What it offers the rest of the engine
 
-::: file engine/sync.h
+::: file engine/devsync.h
 
 `main.cpp` starts it once, asks for commands each frame, and shows its status line on the game list. Everything else happens on a background thread.
 
@@ -48,7 +48,7 @@ The phone is not told the PC's address. It works it out:
 
 ## Deciding what to download
 
-::: source engine/sync.cpp sync_games
+::: source engine/devsync.cpp sync_games
 
 For each game, the phone keeps a small record (`.sync`) of the hash of every file it downloaded. A file is fetched when its hash in the manifest differs from the record, or when the file itself is missing. Files and whole games that have disappeared from the PC are removed from the phone, using the record, so only files that sync itself downloaded are ever deleted.
 
@@ -58,7 +58,7 @@ Synced games take priority over the copies bundled inside the app. That is how y
 
 The phone writes whatever paths the manifest names. A wrong or malicious list must not be able to write outside the games folder, so every name is checked first:
 
-::: source engine/sync.cpp valid_name safe_path
+::: source engine/devsync.cpp valid_name safe_path
 
 A game name is lowercase letters, digits and dashes. A path may not be absolute, contain a backslash, or contain `.` or `..` as a part. Anything else is ignored.
 
@@ -85,7 +85,7 @@ What limits the damage if it did happen: games run in a Lua state with no file o
 
 ## Working on this file
 
-- **It cannot be compiled on Windows.** It uses POSIX sockets, so the PC build leaves it out. Every GitHub build first compiles it with `tests/sync_test.cpp` and runs it against a real `dev.py` on the Mac; the app is only built if that passes. Add a check there for anything you change here.
+- **It cannot be compiled on Windows.** It uses POSIX sockets, so the PC build leaves it out. Every GitHub build first compiles it with `tests/devsync_test.cpp` and runs it against a real `dev.py` on the Mac; the app is only built if that passes. Add a check there for anything you change here.
 - The namespace is `devsync` because `sync` is already a POSIX function.
 - On Linux, `gamelab --phone <folder>` makes a desktop build behave like the loader, which is the only way to run this code off the phone.
 - While it searches for the PC, the phone opens and drops many connections. Python on Windows would print an error for each; `QuietServer` in `dev.py` hides those harmless messages.

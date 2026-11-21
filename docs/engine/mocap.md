@@ -18,7 +18,7 @@ While recording, the phone also films the take (H.264, 30 frames a second). SEND
 
 | Step | Where |
 |---|---|
-| The phone writes the video | `ios/bodytrack.mm` (`AVAssetWriter`); `mocap.video()` hands it to Lua |
+| The phone writes the video | `ios/mocap.mm` (`AVAssetWriter`); `mocap.video()` hands it to Lua |
 | The PC receives it, makes it upright at 30 fps (ffmpeg), runs GVHMR, tracks the job | `backends/mocap/server.py` (`/video`, `/job`, `/result`) |
 | GVHMR itself, without its video renders, then the `.bvh` and the phone's joint file | `tools/gvhmr/run_take.py`, run in WSL Ubuntu |
 | Installing GVHMR (Miniforge, PyTorch 2.10 for RTX 50 cards, PyTorch3D, the weights) | `tools/gvhmr/install.sh` |
@@ -39,7 +39,7 @@ The model weights came from a Hugging Face mirror because GVHMR's Google Drive w
 
 | Part | Where | Changes need |
 |---|---|---|
-| Body tracking and recording | `ios/bodytrack.mm` (ARKit) | An app build |
+| Body tracking and recording | `ios/mocap.mm` (ARKit) | An app build |
 | The Lua functions | `mocap.*` in `engine/script.cpp`, declared in `engine/mocap.h` | An app build |
 | The recording screen | `games/mocap/main.lua` | Nothing: it syncs |
 | Turning a take into `.bvh` | `backends/mocap/server.py`, run by `dev.py` | Nothing: save and the next take uses it |

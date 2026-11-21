@@ -4,6 +4,7 @@
 -- Made by main.lua: include("skeleton.lua")(game) returns the functions below; the shared game table carries
 -- everything it uses from elsewhere (listed at the top) and the state the files share (game.state, game.score...).
 return function(game)
+local bone_local = model.bone_local or model["local"]   -- a bone's own transform (older apps only have the second)
 -- from main.lua
 local SERVE, lib = game.SERVE, game.lib
 -- from vec.lua
@@ -35,9 +36,9 @@ end
 
 -- Sets a bone's turn inside the model, through its turn within its parent.
 local function set_turn(name, parent_turn, turn, a)
-  local t1, t2, t3, _, _, _, _, s1, s2, s3 = model["local"](mannequin_model, a, name)
+  local t1, t2, t3, _, _, _, _, s1, s2, s3 = bone_local(mannequin_model, a, name)
   local q = qmul(qinv(parent_turn), turn)
-  model["local"](mannequin_model, a, name, t1, t2, t3, q[1], q[2], q[3], q[4], s1, s2, s3)
+  bone_local(mannequin_model, a, name, t1, t2, t3, q[1], q[2], q[3], q[4], s1, s2, s3)
 end
 
 local function partner(name)
@@ -50,8 +51,8 @@ end
 local function write_pose(turns, hips, a)
   local ppos, pturn = joint(hips_parent, a)
   local at = rot(qinv(pturn), sub(hips, ppos))
-  local _, _, _, q1, q2, q3, q4, s1, s2, s3 = model["local"](mannequin_model, a, "hips")
-  model["local"](mannequin_model, a, "hips", at[1], at[2], at[3], q1, q2, q3, q4, s1, s2, s3)
+  local _, _, _, q1, q2, q3, q4, s1, s2, s3 = bone_local(mannequin_model, a, "hips")
+  bone_local(mannequin_model, a, "hips", at[1], at[2], at[3], q1, q2, q3, q4, s1, s2, s3)
   for _, b in ipairs(bones) do
     local parent_turn = turns[b.parent] or select(2, joint(b.parent, a))
     set_turn(b.name, parent_turn, turns[b.name], a)

@@ -45,12 +45,12 @@ endif()
 
 # ---- the app ----
 set(ENGINE_SOURCES engine/main.cpp engine/gfx.cpp engine/input.cpp engine/script.cpp
-    engine/model.cpp engine/collide.cpp engine/audio.cpp engine/net.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
+    engine/model.cpp engine/phys.cpp engine/audio.cpp engine/net.cpp ${stb_SOURCE_DIR}/stb_vorbis.c)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
   enable_language(OBJCXX)
   # the phone's tap-feedback motor, HTTPS through NSURLSession, and body tracking for motion capture
-  list(APPEND ENGINE_SOURCES ios/haptics.mm ios/http.mm ios/bodytrack.mm)
-  set_source_files_properties(ios/haptics.mm ios/http.mm ios/bodytrack.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+  list(APPEND ENGINE_SOURCES ios/haptics.mm ios/http.mm ios/mocap.mm)
+  set_source_files_properties(ios/haptics.mm ios/http.mm ios/mocap.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 endif()
 
 # A standalone game may only be held one way up. Its game.cfg says so with a line like: orientation = landscape
@@ -71,7 +71,7 @@ endif()
 set(WITH_SYNC OFF)
 if(NOT SINGLE_GAME AND NOT WIN32)
   set(WITH_SYNC ON)
-  list(APPEND ENGINE_SOURCES engine/sync.cpp)
+  list(APPEND ENGINE_SOURCES engine/devsync.cpp)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")

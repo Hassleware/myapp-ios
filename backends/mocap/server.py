@@ -7,7 +7,7 @@ Two kinds of take arrive from the phone:
                            progress and fetches GET /result?name=walk (joint positions) to replay it.
 SAM 3D Body is installed by tools/sam3d/install.sh; tools/sam3d/run_take.py is what runs for each video.
 
-The phone sends   POST /take?name=walk   with the recording as text (see ios/bodytrack.mm for the format).
+The phone sends   POST /take?name=walk   with the recording as text (see ios/mocap.mm for the format).
 This writes      captures/walk.bvh   in the repo (git ignores the folder) and answers with where it went.
 
 In Blender: File > Import > Motion Capture (.bvh), scale 1 (one unit is one metre), forward -Z, up Y.

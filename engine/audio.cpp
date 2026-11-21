@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "gfx.h"
-#include "pool.h"
+#include "handles.h"
 
 #define STB_VORBIS_HEADER_ONLY
 #include "stb_vorbis.c"

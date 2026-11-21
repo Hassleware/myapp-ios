@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 
-#include "pool.h"
+#include "handles.h"
 
 #define CGLTF_IMPLEMENTATION
 #include "cgltf.h"
